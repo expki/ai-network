@@ -100,9 +100,10 @@ def text_processor():
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModel
 
-    # Use CUDA, ROCm if available, else CPU
-    device = torch.device("cuda" if torch.cuda.is_available() else ("hip" if torch.backends.hip.is_available() else "cpu"))
-    print("Using device:", device)
+    # Use CUDA
+    if not torch.cuda.is_available():
+        raise Exception("CUDA is not available")
+    device = torch.device("cuda")
 
     # Load tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained('/root/model')
