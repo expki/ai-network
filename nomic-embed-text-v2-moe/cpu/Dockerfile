@@ -1,4 +1,4 @@
-FROM rocm/dev-ubuntu-24.04
+FROM ubuntu:24.04
 
 # Avoid interactive prompts during install
 ENV DEBIAN_FRONTEND=noninteractive
