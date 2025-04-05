@@ -39,6 +39,8 @@ RUN git clone https://github.com/nomic-ai/megablocks.git megablocks
 # Copy final files
 COPY ./setup.sh /root/setup.sh
 COPY ./server.py /root/server.py
+COPY ./ai.py /root/ai.py
+COPY ./download.py /root/download.py
 
 # Default command
 WORKDIR /root

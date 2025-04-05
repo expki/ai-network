@@ -25,17 +25,17 @@ Powered by nomic-embed-text-v2-moe (https://huggingface.co/nomic-ai/nomic-embed-
 """
 
 import json
-import threading
-import queue
 import asyncio
-import time
-import uuid
 import logging
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from quart import Quart, Response, request
 import zstandard as zstd
 import numpy as np
+import signal
+from torch.cuda import is_available
+
+import ai
 
 class ZstdCompressionMiddleware:
     def __init__(self, app, minimum_size: int = 1000):
@@ -68,262 +68,15 @@ class ZstdCompressionMiddleware:
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger('http2_server')
-
-# Create a queue for text processing with max size of 10
-text_queue = queue.Queue(maxsize=10)
-# Create a dictionary to store results
-results = {}
-# Create a lock for the results dictionary
-results_lock = threading.Lock()
-# Create a condition variable for signaling when results are ready
-result_ready = threading.Condition()
-# Create a condition variable for signaling when queue space is available
-queue_space_available = threading.Condition()
-# Flag to indicate if the processor is busy
-processor_busy = False
-processor_lock = threading.Lock()
+logger = logging.getLogger('server')
 
 # Initialize the Quart app
 app = Quart(__name__)
 
 # Apply ZstdCompressionMiddleware to the Quart app
 app.asgi_app = ZstdCompressionMiddleware(app.asgi_app)
-
-# Worker function that processes text in the queue
-def text_processor():
-    global processor_busy
-
-    import torch
-    import torch.nn.functional as F
-    from transformers import AutoTokenizer, AutoModel
-
-    # Use CUDA
-    if not torch.cuda.is_available():
-        raise Exception("CUDA is not available")
-    device = torch.device("cuda")
-
-    # Load tokenizer and model
-    tokenizer = AutoTokenizer.from_pretrained('/root/model')
-    model = AutoModel.from_pretrained('/root/model', trust_remote_code=True).to(device)
-
-    logger.info(f"Server is ready")
-
-    # Only use half precision if the device supports it
-    try:
-        model = model.half()
-        dataType = torch.float16
-    except Exception as e:
-        print("Warning: model.half() failed:", e)
-        dataType = torch.float32
-
-    # Enable FlashAttention if supported
-    if hasattr(model, "enable_flash_attention"):
-        try:
-            model.enable_flash_attention()
-        except Exception as e:
-            print("Warning: enable_flash_attention failed:", e)
-    
-    def mean_pooling(model_output, attention_mask):
-        token_embeddings = model_output[0]
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-        return torch.sum(token_embeddings * input_mask_expanded, dim=1) / torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
-    
-    # Disable model training
-    model.eval()
-    
-    while True:
-        try:
-            # Get request_id and text from the queue
-            request_id, sentences = text_queue.get()
-            
-            # Mark the processor as busy
-            with processor_lock:
-                processor_busy = True
-            
-            logger.info(f"Processing request {request_id}, queue size: {text_queue.qsize()}/{text_queue.maxsize}")
-
-            try:
-                # Tokenize and move to device
-                encoded_input = tokenizer(sentences, padding=True, truncation=True, return_tensors='pt').to(device)
-
-                # Autocast based on actual device type
-                with torch.amp.autocast(device_type=device.type, dtype=dataType):
-                    with torch.inference_mode():
-                        model_output = model(**encoded_input)
-
-                # Mean pooling and normalize
-                embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
-                embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
-            except Exception as e:
-                logger.error(f"Processing request {request_id} failed: {e}")
-                embeddings = None
-            finally:
-                # Store the result and notify
-                with results_lock:
-                    results[request_id] = embeddings
-                    # Notify all waiting threads that a result is ready
-                    with result_ready:
-                        result_ready.notify_all()
-                
-                # Mark the processor as not busy
-                with processor_lock:
-                    processor_busy = False
-                
-                # Mark the task as done
-                text_queue.task_done()
-                
-                # Notify that space is available in the queue
-                with queue_space_available:
-                    queue_space_available.notify_all()
-            
-        except Exception as e:
-            logger.error(f"Error in text processor: {e}")
-            # Make sure to reset the busy flag in case of error
-            with processor_lock:
-                processor_busy = False
-                
-            # Notify that space is available in the queue in case of error
-            with queue_space_available:
-                queue_space_available.notify_all()
-
-# Start the text processor thread
-processor_thread = threading.Thread(target=text_processor, daemon=True)
-processor_thread.start()
-
-async def process_request(request, textList):
-    # Generate a unique request ID using UUID
-    request_id = str(uuid.uuid4())
-    
-    # Create a shared flag to indicate client disconnection
-    client_disconnected = {'value': False}
-    
-    # Check if the queue is full and wait for space if needed
-    # We'll do this in a background thread to avoid blocking the event loop
-    if text_queue.full():
-        logger.info(f"Queue is full, request {request_id} waiting for space")
-        
-        # Wait for space in a separate thread
-        def wait_for_space_thread():
-            while True:
-                # Check if client has disconnected
-                if client_disconnected['value']:
-                    logger.info(f"Client disconnected while waiting for queue space: {request_id}")
-                    return False
-                
-                # Try to put in queue without blocking
-                try:
-                    # If we can put it in the queue without waiting, do so
-                    text_queue.put_nowait((request_id, textList))
-                    return True
-                except queue.Full:
-                    # Queue is still full, wait for notification
-                    with queue_space_available:
-                        # Wait with timeout to periodically check for disconnection
-                        queue_space_available.wait(0.5)
-        
-        # Run the waiting function in a thread pool
-        loop = asyncio.get_event_loop()
-        added_to_queue = await loop.run_in_executor(None, wait_for_space_thread)
-        
-        if not added_to_queue:
-            # Client disconnected while waiting, don't process
-            logger.info(f"Client disconnected while waiting for queue space: {request_id}")
-            return Response("", status=499)  # Client Closed Request
-    else:
-        # Queue has space, add immediately
-        text_queue.put((request_id, textList))
-        logger.info(f"Added request {request_id} to queue, size now: {text_queue.qsize()}/{text_queue.maxsize}")
-    
-    # Set up a task to monitor client disconnection
-    async def monitor_client_connection():
-        try:
-            logger.info(f"Starting connection monitor for request {request_id}")
-            
-            # In Quart/ASGI, we can detect disconnection by checking the connection state
-            # This approach uses a simple timeout-based check
-            start_time = time.time()
-            
-            while True:
-                # Short sleep to check periodically
-                await asyncio.sleep(0.1)
-                
-                try:
-                    # Try to access request data - this will fail if client disconnected
-                    await request.get_data(parse=False, cache=True)
-                except asyncio.CancelledError:
-                    logger.info(f"Request {request_id} cancelled")
-                    break
-                except Exception as e:
-                    logger.info(f"Client disconnected (detected via exception): {e}")
-                    break
-                
-                # Check if we've been running too long (backup timeout)
-                if time.time() - start_time > 90:  # 90 second max
-                    logger.info(f"Monitor timeout for request {request_id}")
-                    break
-                    
-                # If the result is already available, we can stop monitoring
-                with results_lock:
-                    if request_id in results:
-                        logger.info(f"Result ready for {request_id}, stopping monitor")
-                        break
-        except Exception as e:
-            logger.error(f"Connection monitoring error: {e}")
-        finally:
-            logger.info(f"Connection monitor ending for {request_id}, marking as disconnected")
-            # Mark as disconnected
-            client_disconnected['value'] = True
-            # When client disconnects, notify all waiting threads
-            with result_ready:
-                result_ready.notify_all()
-    
-    # Start monitoring client connection in the background
-    disconnect_task = asyncio.create_task(monitor_client_connection())
-    
-    # Wait for the result using a background thread to avoid blocking the event loop
-    def wait_for_result():
-        while True:
-            # Check if the client has disconnected
-            if client_disconnected['value']:
-                return None
-            
-            # Check if the result is available
-            with results_lock:
-                if request_id in results:
-                    return results.pop(request_id)
-            
-            # Wait for notification that a result is ready
-            with result_ready:
-                # Wait with a short timeout to allow for periodic checking
-                result_ready.wait(0.1)
-    
-    # Run the waiting function in a thread pool
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, wait_for_result)
-    
-    # Cancel the disconnect monitoring task if it's still running
-    if not disconnect_task.done():
-        disconnect_task.cancel()
-    
-    if result is None:
-        # Clean up any pending results for this request
-        with results_lock:
-            if request_id in results:
-                result = results.pop(request_id)
-                logger.info(f"Found result for {request_id} during cleanup: {result[:30]}...")
-        
-        # If client disconnected, we don't need to send a response
-        if client_disconnected['value']:
-            return None
-        else:
-            logger.info(f"Request {request_id} timed out without client disconnect")
-            raise Exception(f"Processing took too long: {request_id}")
-    
-    # Return the result
-    return result
 
 @app.route('/', methods=['GET'])
 async def root_request():
@@ -337,8 +90,7 @@ async def root_request():
 @app.route('/status', methods=['GET'])
 async def status_request():
     # Check if the processor is currently busy
-    with processor_lock:
-        is_busy = processor_busy
+    is_busy = await ai.is_processing()
     
     # Respond status
     return Response(
@@ -371,25 +123,37 @@ async def process_openapi_request():
             textList = [textList]
         
         # Process request
-        embeddingMatrix = await process_request(request, textList)
-        if embeddingMatrix is None:
+        task = asyncio.create_task(ai.process_request(textList))
+        try:
+            # Wait for the response
+            result = await task
+            if result is None:
+                return Response(
+                    "AI returned empty embedding",
+                    status=500
+                )
+            # Return response to client
             return Response(
-                "",
-                status=499 # Client Closed Request
+                json.dumps({
+                    "model": "nomic-embed-text-v2-moe",
+                    "data": [{"embedding": embeddingArray, "index": i} for i, embeddingArray in enumerate(result.tolist())]
+                }),
+                status=200,
+                content_type='application/json',
             )
-        embeddingMatrix = embeddingMatrix.tolist()
-
-        # Return response
-        return Response(
-            json.dumps({
-                "model": "nomic-embed-text-v2-moe",
-                "data": [{"embedding": embeddingArray, "index": i} for i, embeddingArray in enumerate(embeddingMatrix)]
-            }),
-            status=200,
-            content_type='application/json',
-        )
-
+        except asyncio.CancelledError:
+            # Handle client canceled request
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return Response(
+                "Client cancelled the OpenAPI task",
+                status=499
+            )
     except Exception as e:
+        # Handle uncaught exception
         logger.error(f"Error processing OpenAPI request: {e}", exc_info=True)
         return Response(
             json.dumps({"error": {"message": str(e)}}), 
@@ -404,7 +168,7 @@ async def process_ollama_request():
         data = await request.get_json()
         if data is None:
             return Response(
-                json.dumps({"error": "Missing request body"}), 
+                json.dumps({"error": {"message": "Missing request body"}}), 
                 status=400, 
                 content_type='application/json'
             )
@@ -421,28 +185,40 @@ async def process_ollama_request():
             textList = [textList]
         
         # Process request
-        embeddingMatrix = await process_request(request, textList)
-        if embeddingMatrix is None:
+        task = asyncio.create_task(ai.process_request(textList))
+        try:
+            # Wait for the response
+            result = await task
+            if result is None:
+                return Response(
+                    "AI returned empty embedding",
+                    status=500
+                )
+            # Return response to client
             return Response(
-                "",
-                status=499 # Client Closed Request
+                json.dumps({
+                    "model": "nomic-embed-text-v2-moe",
+                    "embeddings": result.tolist(),
+                }),
+                status=200,
+                content_type='application/json',
             )
-        embeddingMatrix = embeddingMatrix.tolist()
-
-        # Return response
-        return Response(
-            json.dumps({
-                "model": "nomic-embed-text-v2-moe",
-                "embeddings": embeddingMatrix,
-            }),
-            status=200,
-            content_type='application/json',
-        )
-
+        except asyncio.CancelledError:
+            # Handle client canceled request
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return Response(
+                "Client cancelled the Ollama task",
+                status=499
+            )
     except Exception as e:
-        logger.error(f"Error processing ollama request: {e}", exc_info=True)
+        # Handle uncaught exception
+        logger.error(f"Error processing Ollama request: {e}", exc_info=True)
         return Response(
-            json.dumps({"error": str(e)}), 
+            json.dumps({"error": {"message": str(e)}}), 
             status=500, 
             content_type='application/json'
         )
@@ -471,30 +247,55 @@ async def process_vdh_request():
             textList = [textList]
         
         # Process request
-        embeddingMatrix = await process_request(request, textList)
-        if embeddingMatrix is None:
+        task = asyncio.create_task(ai.process_request(textList))
+        try:
+            # Wait for the response
+            result = await task
+            if result is None:
+                return Response(
+                    "AI returned empty embedding",
+                    status=500
+                )
+            # Quantize response q8_0(-1,1)
+            embeddingMatrix = np.multiply(np.divide(np.subtract(result, -1), 2), 255).astype(np.uint8).tobytes(order='C')
+            # Return response to client
             return Response(
-                "",
-                status=499 # Client Closed Request
+                embeddingMatrix,
+                status=200,
+                content_type='application/octet-stream',
             )
-        embeddingMatrix = np.multiply(np.divide(np.subtract(embeddingMatrix, -1), 2), 255).astype(np.uint8).tobytes(order='C')
-
-        # Return response
-        return Response(
-            embeddingMatrix,
-            status=200,
-            content_type='application/octet-stream',
-        )
-
+        except asyncio.CancelledError:
+            # Handle client canceled request
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            return Response(
+                "Client cancelled the VDH task",
+                status=499
+            )
     except Exception as e:
-        logger.error(f"Error processing OpenAPI request: {e}", exc_info=True)
+        # Handle uncaught exception
+        logger.error(f"Error processing VDH request: {e}", exc_info=True)
         return Response(
             json.dumps({"error": {"message": str(e)}}), 
             status=500, 
             content_type='application/json'
         )
 
-if __name__ == '__main__':
+async def serve_app(app, config):
+    print("Hypercorn server is starting")
+    try:
+        # Running the server, this will keep it alive until shutdown
+        await serve(app, config)
+    except Exception:
+        pass  # Gracefully handle the server shutdown here
+    finally:
+        await ai.shutdown()
+    print("Hypercorn server has stopped")
+
+async def main():
     print(citation)
     config = Config()
     config.bind = ["0.0.0.0:7500"]
@@ -502,5 +303,34 @@ if __name__ == '__main__':
     config.cors_allowed_origins = "*"
     config.certfile = "/etc/ssl/certs/server.crt"
     config.keyfile = "/etc/ssl/private/server.key"
-    
-    asyncio.run(serve(app, config))
+
+    # Scheduling both functions to run concurrently
+    task1 = asyncio.create_task(ai.text_processor())
+    task2 = asyncio.create_task(serve_app(app, config))
+
+    # Wait for both tasks to finish
+    await asyncio.gather(task1, task2)
+
+async def cancel_tasks(loop, msg):
+    print(msg)
+    # Cancel all tasks running in the event loop
+    for task in asyncio.all_tasks(loop):
+        task.cancel()
+    await asyncio.sleep(1)
+    loop.stop()
+
+if __name__ == '__main__':
+    if not is_available():
+        raise Exception("CUDA is not available")
+
+    # Register the signal handler for Ctrl+C (SIGINT) to cancel the running tasks
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(cancel_tasks(loop, "SIGINT - Ctrl+C")))
+    loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(cancel_tasks(loop, "SIGTERM - Termination request")))
+    loop.add_signal_handler(signal.SIGHUP, lambda: asyncio.create_task(cancel_tasks(loop, "SIGHUP - Reload or restart signal")))
+
+    try:
+        # Run the main task in the event loop
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Program interrupted by user.")
