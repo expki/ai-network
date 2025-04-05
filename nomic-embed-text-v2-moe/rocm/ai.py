@@ -43,7 +43,7 @@ async def text_processor():
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModel
 
-    # Use CUDA
+    # Use ROCm
     device = torch.device("cuda")
     logger.info(f"Using GPU device: {torch.cuda.get_device_name(device)}")
 
