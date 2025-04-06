@@ -297,7 +297,7 @@ async def serve_app(app, config):
 async def main():
     print(citation)
     config = Config()
-    config.bind = ["0.0.0.0:7500"]
+    config.bind = ["0.0.0.0:7300"]
     config.h2 = True
     config.cors_allowed_origins = "*"
     config.certfile = "/etc/ssl/certs/server.crt"
