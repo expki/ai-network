@@ -48,6 +48,7 @@ async def text_processor():
     envLowMemory = os.getenv("LOW_MEMORY", "0").strip().lower()
     if envLowMemory == "1" or envLowMemory == "true":
         lowMemory = True
+    logger.info(f"Low Memory Mode is {"ENABLED" if lowMemory else "DISABLED"}")
 
     # Use CUDA
     device = torch.device("cuda")
@@ -112,10 +113,12 @@ async def text_processor():
                             normed = F.normalize(pooled, p=2, dim=1)
                             embeddings_list.append(normed.cpu())
                         embeddings = torch.cat(embeddings_list, dim=0).numpy()
+                        torch.cuda.empty_cache()
                     else:
                         encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt')
-                        embeddings = model(**{k: v.to(device) for k, v in encoded_input.items()})
-                        embeddings = mean_pooling(embeddings, encoded_input['attention_mask'].to(device))
+                        encoded_input = {k: v.to(device) for k, v in encoded_input.items()}
+                        output = model(**encoded_input)
+                        embeddings = mean_pooling(output, encoded_input['attention_mask'])
                         embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
             except Exception as e:
                 logger.error(f"{request_id}: request failed: {str(e)}")
@@ -139,7 +142,6 @@ async def text_processor():
         finally:
             async with processor_lock:
                 processor_busy = False
-            torch.cuda.empty_cache()
 
 async def process_request(textList):
     # Generate a unique request ID using UUID
