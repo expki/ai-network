@@ -15,6 +15,7 @@ import asyncio
 import uuid
 import logging
 import warnings
+import os
 
 # Ignore all deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -42,6 +43,11 @@ async def text_processor():
     import torch
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModel
+
+    lowMemory = False
+    envLowMemory = os.getenv("LOW_MEMORY", "0").strip().lower()
+    if envLowMemory == "1" or envLowMemory == "true":
+        lowMemory = True
 
     # Use CUDA
     device = torch.device("cuda")
@@ -93,20 +99,24 @@ async def text_processor():
                 processor_busy = True
             
             try:
-                # Tokenize and move to device
-                logger.info(f"{request_id}: tokenizing text list")
-                encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt').to(device)
-
                 # Autocast based on actual device type
                 logger.info(f"{request_id}: AI producing embedding")
                 with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=dataType):
-                    embeddings = model(**{k: v.to(device) for k, v in encoded_input.items()})
-
-                # Mean pooling and normalize
-                logger.info(f"{request_id}: mean pooling the embedding")
-                embeddings = mean_pooling(embeddings, encoded_input['attention_mask'].to(device))
-                logger.info(f"{request_id}: normalizing the embedding")
-                embeddings = F.normalize(embeddings, p=2, dim=1, out=embeddings).cpu().numpy()
+                    if lowMemory:
+                        embeddings_list = []
+                        for text in textList:
+                            single_input = tokenizer(text, padding=True, truncation=True, return_tensors='pt')
+                            single_input = {k: v.to(device) for k, v in single_input.items()}
+                            output = model(**single_input)
+                            pooled = mean_pooling(output, single_input['attention_mask'])
+                            normed = F.normalize(pooled, p=2, dim=1)
+                            embeddings_list.append(normed.cpu())
+                        embeddings = torch.cat(embeddings_list, dim=0).numpy()
+                    else:
+                        encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt')
+                        embeddings = model(**{k: v.to(device) for k, v in encoded_input.items()})
+                        embeddings = mean_pooling(embeddings, encoded_input['attention_mask'].to(device))
+                        embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
             except Exception as e:
                 logger.error(f"{request_id}: request failed: {str(e)}")
                 embeddings = None
