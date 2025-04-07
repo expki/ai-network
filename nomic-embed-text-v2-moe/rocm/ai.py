@@ -98,10 +98,6 @@ async def text_processor():
                 processor_busy = True
             
             try:
-                # Tokenize and move to device
-                logger.info(f"{request_id}: tokenizing text list")
-                encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt').to(device)
-
                 # Autocast based on actual device type
                 logger.info(f"{request_id}: AI producing embedding")
                 with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=dataType):
