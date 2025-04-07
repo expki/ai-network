@@ -56,14 +56,6 @@ async def text_processor():
     except Exception as e:
         print("Warning: model.half() failed:", e)
         dataType = torch.float32
-
-    # Enable FlashAttention if supported
-    logger.info("Enabling FlashAttention")
-    if hasattr(model, "enable_flash_attention"):
-        try:
-            model.enable_flash_attention()
-        except Exception as e:
-            print("Warning: enable_flash_attention failed:", e)
     
     def mean_pooling(model_output, attention_mask):
         token_embeddings = model_output[0]

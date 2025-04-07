@@ -62,8 +62,8 @@ async def text_processor():
         dataType = torch.float32
 
     # Enable FlashAttention if supported
-    logger.info("Enabling FlashAttention")
     if hasattr(model, "enable_flash_attention"):
+        logger.info("Enabling FlashAttention")
         try:
             model.enable_flash_attention()
         except Exception as e:

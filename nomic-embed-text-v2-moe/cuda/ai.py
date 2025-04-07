@@ -56,14 +56,14 @@ async def text_processor():
     logger.info("Switch to half precision")
     try:
         model = model.half()
-        dataType = torch.float16
+        dataType = torch.bfloat16
     except Exception as e:
         print("Warning: model.half() failed:", e)
         dataType = torch.float32
 
     # Enable FlashAttention if supported
-    logger.info("Enabling FlashAttention")
     if hasattr(model, "enable_flash_attention"):
+        logger.info("Enabling FlashAttention")
         try:
             model.enable_flash_attention()
         except Exception as e:
@@ -71,7 +71,7 @@ async def text_processor():
     
     def mean_pooling(model_output, attention_mask):
         token_embeddings = model_output[0]
-        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).to(token_embeddings.dtype)
         return torch.sum(token_embeddings * input_mask_expanded, dim=1) / torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
     
     # Disable model training
@@ -99,15 +99,14 @@ async def text_processor():
 
                 # Autocast based on actual device type
                 logger.info(f"{request_id}: AI producing embedding")
-                with torch.amp.autocast(device_type=device.type, dtype=dataType):
-                    with torch.inference_mode():
-                        model_output = model(**encoded_input)
+                with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=dataType):
+                    embeddings = model(**{k: v.to(device) for k, v in encoded_input.items()})
 
                 # Mean pooling and normalize
                 logger.info(f"{request_id}: mean pooling the embedding")
-                embeddings = mean_pooling(model_output, encoded_input['attention_mask'])
+                embeddings = mean_pooling(embeddings, encoded_input['attention_mask'].to(device))
                 logger.info(f"{request_id}: normalizing the embedding")
-                embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
+                embeddings = F.normalize(embeddings, p=2, dim=1, out=embeddings).cpu().numpy()
             except Exception as e:
                 logger.error(f"{request_id}: request failed: {str(e)}")
                 embeddings = None
@@ -130,6 +129,7 @@ async def text_processor():
         finally:
             async with processor_lock:
                 processor_busy = False
+            torch.cuda.empty_cache()
 
 async def process_request(textList):
     # Generate a unique request ID using UUID
