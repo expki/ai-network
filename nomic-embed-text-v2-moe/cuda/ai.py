@@ -108,17 +108,17 @@ async def text_processor():
                         for text in textList:
                             single_input = tokenizer(text, padding=True, truncation=True, return_tensors='pt')
                             single_input = {k: v.to(device) for k, v in single_input.items()}
-                            output = model(**single_input)
-                            pooled = mean_pooling(output, single_input['attention_mask'])
-                            normed = F.normalize(pooled, p=2, dim=1)
-                            embeddings_list.append(normed.cpu())
+                            embedding = model(**single_input)
+                            embedding = mean_pooling(embedding, single_input['attention_mask'])
+                            embedding = F.normalize(embedding, p=2, dim=1)
+                            embeddings_list.append(embedding.cpu())
                         embeddings = torch.cat(embeddings_list, dim=0).numpy()
                         torch.cuda.empty_cache()
                     else:
                         encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt')
                         encoded_input = {k: v.to(device) for k, v in encoded_input.items()}
-                        output = model(**encoded_input)
-                        embeddings = mean_pooling(output, encoded_input['attention_mask'])
+                        embeddings = model(**encoded_input)
+                        embeddings = mean_pooling(embeddings, encoded_input['attention_mask'])
                         embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
             except Exception as e:
                 logger.error(f"{request_id}: request failed: {str(e)}")
