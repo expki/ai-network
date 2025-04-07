@@ -44,11 +44,8 @@ async def text_processor():
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModel
 
-    lowMemory = False
-    envLowMemory = os.getenv("LOW_MEMORY", "0").strip().lower()
-    if envLowMemory == "1" or envLowMemory == "true":
-        lowMemory = True
-    logger.info(f"Low Memory Mode is {"ENABLED" if lowMemory else "DISABLED"}")
+    lowMemory = int(os.getenv("LOW_MEMORY", "0").strip().lower())
+    logger.info(f"Low Memory Mode is {"DISABLED" if lowMemory <= 0 else f"ENABLED={lowMemory}"}")
 
     # Use CUDA
     device = torch.device("cuda")
@@ -103,20 +100,29 @@ async def text_processor():
                 # Autocast based on actual device type
                 logger.info(f"{request_id}: AI producing embedding")
                 with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=dataType):
-                    if lowMemory:
+                    if lowMemory >= 1:
                         embeddings_list = []
-                        for text in textList:
-                            single_input = tokenizer(text, padding=True, truncation=True, return_tensors='pt')
-                            single_input = {k: v.to(device) for k, v in single_input.items()}
-                            embedding = model(**single_input)
-                            embedding = mean_pooling(embedding, single_input['attention_mask'])
-                            embedding = F.normalize(embedding, p=2, dim=1)
-                            embeddings_list.append(embedding.cpu())
+                        for i in range(0, len(textList), lowMemory):  # Process `lowMemory` items at a time
+                            # Get the current batch of `lowMemory` items
+                            batch_texts = textList[i:i + lowMemory]
+                            batch_input = tokenizer(batch_texts, padding=True, truncation=True, return_tensors='pt')
+                            batch_input = {k: v.to(device) for k, v in batch_input.items()}
+                            
+                            # Forward pass
+                            embedding = model(**batch_input)
+                            embedding = mean_pooling(embedding, batch_input['attention_mask'])
+                            embedding = F.normalize(embedding, p=2, dim=1).cpu()
+                            embeddings_list.append(embedding)
+                        
+                        # Combine all embeddings and convert to numpy
                         embeddings = torch.cat(embeddings_list, dim=0).numpy()
                         torch.cuda.empty_cache()
                     else:
+                        # Process all items at once (normal memory mode)
                         encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt')
                         encoded_input = {k: v.to(device) for k, v in encoded_input.items()}
+                        
+                        # Forward pass
                         embeddings = model(**encoded_input)
                         embeddings = mean_pooling(embeddings, encoded_input['attention_mask'])
                         embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
