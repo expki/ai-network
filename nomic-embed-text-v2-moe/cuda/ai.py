@@ -113,6 +113,7 @@ async def text_processor():
                             embedding = mean_pooling(embedding, batch_input['attention_mask'])
                             embedding = F.normalize(embedding, p=2, dim=1).cpu()
                             embeddings_list.append(embedding)
+                            del batch_input
                         
                         # Combine all embeddings and convert to numpy
                         embeddings = torch.cat(embeddings_list, dim=0).numpy()
@@ -126,6 +127,7 @@ async def text_processor():
                         embeddings = model(**encoded_input)
                         embeddings = mean_pooling(embeddings, encoded_input['attention_mask'])
                         embeddings = F.normalize(embeddings, p=2, dim=1).cpu().numpy()
+                        del encoded_input
             except Exception as e:
                 logger.error(f"{request_id}: request failed: {str(e)}")
                 embeddings = None
