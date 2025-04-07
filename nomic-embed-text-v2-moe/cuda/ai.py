@@ -44,6 +44,7 @@ async def text_processor():
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModel
 
+    # Low memory
     lowMemory = int(os.getenv("LOW_MEMORY", "0").strip().lower())
     logger.info(f"Low Memory Mode is {"DISABLED" if lowMemory <= 0 else f"ENABLED={lowMemory}"}")
 
