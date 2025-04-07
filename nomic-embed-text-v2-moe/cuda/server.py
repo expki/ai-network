@@ -34,6 +34,7 @@ import zstandard as zstd
 import numpy as np
 import signal
 from torch.cuda import is_available
+import threading
 
 import ai
 
@@ -297,6 +298,12 @@ async def serve_app(app, config):
 
 async def main():
     print(citation)
+
+    # Start the worker thread.
+    worker_thread = threading.Thread(target=ai.text_processor, daemon=True)
+    worker_thread.start()
+
+    # Configuring webserver
     config = Config()
     config.bind = ["0.0.0.0:7500"]
     config.h2 = True
@@ -304,12 +311,11 @@ async def main():
     config.certfile = "/etc/ssl/certs/server.crt"
     config.keyfile = "/etc/ssl/private/server.key"
 
-    # Scheduling both functions to run concurrently
-    task1 = asyncio.create_task(ai.text_processor())
-    task2 = asyncio.create_task(serve_app(app, config))
+    # Creating tasks
+    mainTask = asyncio.create_task(serve_app(app, config))
 
-    # Wait for both tasks to finish
-    await asyncio.gather(task1, task2)
+    # Wait for tasks to finish
+    await asyncio.gather(mainTask)
 
 async def cancel_tasks(loop, msg):
     print(msg)

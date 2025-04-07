@@ -16,6 +16,7 @@ import uuid
 import logging
 import warnings
 import os
+from queue import Queue, Full
 
 # Ignore all deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -23,20 +24,12 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 logger = logging.getLogger('processor')
 
-# Create a queue for text processing with max size of 1
-text_queue = asyncio.Queue(maxsize=1)
-
-# Create a dictionary to store results
-results_lock = asyncio.Lock()
-result_ready = asyncio.Condition()
-results = {}
-
-# Flag to indicate if the processor is busy
-processor_lock = asyncio.Lock()
+# Shared objects between threads.
+text_queue = Queue(maxsize=2)
 processor_busy = False
 
 # Worker function that processes text in the queue
-async def text_processor():
+def text_processor():
     logger.info("Starting text processor")
     global processor_busy
 
@@ -65,14 +58,6 @@ async def text_processor():
     except Exception as e:
         print("Warning: model.half() failed:", e)
         dataType = torch.float32
-
-    # Enable FlashAttention if supported
-    if hasattr(model, "enable_flash_attention"):
-        logger.info("Enabling FlashAttention")
-        try:
-            model.enable_flash_attention()
-        except Exception as e:
-            print("Warning: enable_flash_attention failed:", e)
     
     def mean_pooling(model_output, attention_mask):
         token_embeddings = model_output[0]
@@ -87,15 +72,14 @@ async def text_processor():
     while True:
         try:
             # Get request_id and text from the queue
-            request_id, textList = await text_queue.get()
-            if request_id is None and textList is None:
+            request_id, textList, response_queue = text_queue.get()
+            if request_id is None:
                 logger.info("text processor has stopped")
                 return # shutdown
             logger.info(f"{request_id}: received from queue")
             
             # Mark the processor as busy
-            async with processor_lock:
-                processor_busy = True
+            processor_busy = True
             
             try:
                 # Autocast based on actual device type
@@ -133,48 +117,41 @@ async def text_processor():
                 embeddings = None
             finally:
                 # Store the result and notify
-                logger.info(f"{request_id}: storing result")
-                async with results_lock:
-                    results[request_id] = embeddings
-                
-                # Mark the task as done
-                logger.info(f"{request_id}: notifying request processed")
+                logger.info(f"{request_id}: returning result")
+                response_queue.put(embeddings)
                 text_queue.task_done()
-
-                # Notify everyone of a result that is ready
-                logger.info(f"{request_id}: notifying of result ready")
-                async with result_ready:
-                    result_ready.notify_all()
         except Exception as e:
             logger.error(f"Error in text processor: {str(e)}")
         finally:
-            async with processor_lock:
-                processor_busy = False
+            processor_busy = False
 
 async def process_request(textList):
+    loop = asyncio.get_running_loop()
+    
     # Generate a unique request ID using UUID
     request_id = str(uuid.uuid4())
 
-    # Write to the queue
-    logger.info(f"{request_id}: adding to queue")
-    await text_queue.put((request_id, textList))
+    # Create response queue
+    response_queue = Queue(maxsize=1)
 
-    # Wait for the result
-    logger.info(f"{request_id}: waiting for result")
-    while True:
-        # check if result is ready
-        async with results_lock:
-            if request_id in results:
-                logger.info(f"{request_id}: received result")
-                return results.pop(request_id)
-        # wait for notification of result ready
-        async with result_ready:
-            await result_ready.wait()
+    # Write to the queue
+    logger.info(f"{request_id}: queueing request")
+    try:
+        text_queue.put_nowait((request_id, textList, response_queue))
+    except Full:
+        logger.info(f"{request_id}: queue is full, waiting")
+        await loop.run_in_executor(None, text_queue.put, (request_id, textList, response_queue))
+
+    # Since response_queue.get() is blocking and not awaitable,
+    # run it in an executor so it doesn't block the event loop.
+    result = await loop.run_in_executor(None, response_queue.get)
+    logger.info(f"{request_id}: received result")
+
+    # Return result
+    return result
 
 async def is_processing() -> bool:
-    async with processor_lock:
-        is_busy = processor_busy
-    return is_busy
+    return processor_busy
 
 async def shutdown():
-    await text_queue.put((None, None))
+    text_queue.put((None, None, None))
