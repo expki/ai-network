@@ -24,47 +24,15 @@ Powered by nomic-embed-text-v2-moe (https://huggingface.co/nomic-ai/nomic-embed-
 }
 """
 
-import json
 import asyncio
 import logging
-from hypercorn.config import Config
-from hypercorn.asyncio import serve
-from quart import Quart, Response, request
 import zstandard as zstd
 import numpy as np
-import signal
-from torch.cuda import is_available
 import threading
 
+from quart import Quart, request, jsonify, Response
+
 import ai
-
-class ZstdCompressionMiddleware:
-    def __init__(self, app, minimum_size: int = 1000):
-        self.app = app
-        self.minimum_size = minimum_size
-
-    async def __call__(self, scope, receive, send):
-        # Process the request and generate a response using the app
-        response = await self.app(scope, receive, send)
-
-        # Check if the client supports zstd compression
-        accept_encoding = dict(scope.get('headers', {})).get(b'accept-encoding', b'').decode('utf-8')
-
-        # Only compress with zstd if the client supports it and the response is large enough
-        if response is not None and 'zstd' in accept_encoding and len(response.body) > self.minimum_size:
-            compressor = zstd.ZstdCompressor()
-            compressed_body = compressor.compress(response.body)
-
-            # Modify response to use compressed body
-            response = Response(
-                compressed_body,
-                status=response.status_code,
-                headers=response.headers
-            )
-            response.headers['Content-Encoding'] = 'zstd'
-
-        # Send the final response
-        await send(response)
 
 # Configure logging
 logging.basicConfig(
@@ -76,8 +44,47 @@ logger = logging.getLogger('server')
 # Initialize the Quart app
 app = Quart(__name__)
 
-# Apply ZstdCompressionMiddleware to the Quart app
-app.asgi_app = ZstdCompressionMiddleware(app.asgi_app)
+# Shutdown cleanup function.
+@app.after_serving
+async def shutdown():
+    logger.error("Shutdown request received")
+    await ai.shutdown()
+
+# Middleware to decompress request data if Content-Encoding is zstd.
+@app.before_request
+async def decompress_request():
+    encoding = request.headers.get("Content-Encoding", "").strip().lower()
+    if encoding == "zstd":
+        # Read the raw request data
+        raw_data = await request.get_data()
+        try:
+            decompressor = zstd.ZstdDecompressor()
+            # Decompress the data
+            decompressed = decompressor.decompress(raw_data)
+            # Store decompressed data in the internal cache
+            # Use request.get_json()/request.get_data() to retrieve
+            request._cached_data = decompressed
+        except Exception as e:
+            return jsonify({"error": f"failed to decompress request body: {e}"}), 400
+
+# Middleware to compress response data if the client accepts zstd encoding.
+@app.after_request
+async def compress_response(response):
+    accept_encoding = request.headers.get("Accept-Encoding", "").strip().lower()
+    # Only compress if the client supports zstd and if the response has a body.
+    if "zstd" in accept_encoding and response.status_code == 200:
+        # Retrieve response data
+        data = await response.get_data()
+        try:
+            compressor = zstd.ZstdCompressor()
+            compressed = compressor.compress(data)
+            response.set_data(compressed)
+            response.headers["Content-Encoding"] = "zstd"
+            response.headers["Content-Length"] = str(len(compressed))
+        except Exception as e:
+            # If compression fails, log the error or take alternative action.
+            app.logger.error(f"Response compression failed: {e}")
+    return response
 
 @app.route('/', methods=['GET'])
 async def root_request():
@@ -106,61 +113,36 @@ async def process_openapi_request():
         # Parse the JSON request
         data = await request.get_json()
         if data is None:
-            return Response(
-                json.dumps({"error": {"message": "Missing request body"}}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": {"message": "Missing request body"}}), 400
 
         # Extract text list
         if 'prompt' not in data:
-            return Response(
-                json.dumps({"error": {"message": "Missing 'prompt' field"}}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": {"message": "Missing 'prompt' field"}}), 400
+
         textList = data['prompt']
         if not isinstance(textList, list):
             textList = [textList]
         
         # Process request
-        task = asyncio.create_task(ai.process_request(textList))
         try:
             # Wait for the response
-            result = await task
+            result = await ai.process_request(textList)
             if result is None:
-                return Response(
-                    "AI returned empty embedding",
-                    status=500
-                )
+                return jsonify({"error": {"message": "AI returned empty embedding"}}), 500
+            
             # Return response to client
-            return Response(
-                json.dumps({
+            return jsonify({
                     "model": "nomic-embed-text-v2-moe",
                     "data": [{"embedding": embeddingArray, "index": i} for i, embeddingArray in enumerate(result.tolist())]
-                }),
-                status=200,
-                content_type='application/json',
-            )
+                }), 200
+
         except asyncio.CancelledError:
-            # Handle client canceled request
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            return Response(
-                "Client cancelled the OpenAPI task",
-                status=499
-            )
+            return jsonify({"error": {"message": "Client cancelled the OpenAPI task"}}), 499
+        
     except Exception as e:
         # Handle uncaught exception
         logger.error(f"Error processing OpenAPI request: {e}", exc_info=True)
-        return Response(
-            json.dumps({"error": {"message": str(e)}}), 
-            status=500, 
-            content_type='application/json'
-        )
+        return jsonify({"error": {"message": str(e)}}), 400
 
 @app.route('/api/embed', methods=['GET', 'POST']) # Ollama compatible
 async def process_ollama_request():
@@ -168,61 +150,35 @@ async def process_ollama_request():
         # Parse the JSON request
         data = await request.get_json()
         if data is None:
-            return Response(
-                json.dumps({"error": {"message": "Missing request body"}}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": {"message": "Missing request body"}}), 400
 
         # Extract text list
         if 'input' not in data:
-            return Response(
-                json.dumps({"error": "Missing 'input' field"}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": "Missing 'input' field"}), 400
+        
         textList = data['input']
         if not isinstance(textList, list):
             textList = [textList]
         
-        # Process request
-        task = asyncio.create_task(ai.process_request(textList))
         try:
             # Wait for the response
-            result = await task
+            result = await ai.process_request(textList)
             if result is None:
-                return Response(
-                    "AI returned empty embedding",
-                    status=500
-                )
+                return jsonify({"error": {"message": "AI returned empty embedding"}}), 500
+            
             # Return response to client
-            return Response(
-                json.dumps({
+            return jsonify({
                     "model": "nomic-embed-text-v2-moe",
                     "embeddings": result.tolist(),
-                }),
-                status=200,
-                content_type='application/json',
-            )
+                }), 200
+
         except asyncio.CancelledError:
-            # Handle client canceled request
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            return Response(
-                "Client cancelled the Ollama task",
-                status=499
-            )
+            return jsonify({"error": {"message": "Client cancelled the Ollama task"}}), 499
+        
     except Exception as e:
         # Handle uncaught exception
         logger.error(f"Error processing Ollama request: {e}", exc_info=True)
-        return Response(
-            json.dumps({"error": {"message": str(e)}}), 
-            status=500, 
-            content_type='application/json'
-        )
+        return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/vdh/embed', methods=['GET', 'POST']) # VDH compatible
 async def process_vdh_request():
@@ -230,33 +186,23 @@ async def process_vdh_request():
         # Parse the JSON request
         data = await request.get_json()
         if data is None:
-            return Response(
-                json.dumps({"error": {"message": "Missing request body"}}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": "Missing request body"}), 400
 
         # Extract text list
         if 'input' not in data:
-            return Response(
-                json.dumps({"error": "Missing 'input' field"}), 
-                status=400, 
-                content_type='application/json'
-            )
+            return jsonify({"error": "Missing 'input' field"}), 400
+        
         textList = data['input']
         if not isinstance(textList, list):
             textList = [textList]
         
         # Process request
-        task = asyncio.create_task(ai.process_request(textList))
         try:
             # Wait for the response
-            result = await task
+            result = await ai.process_request(textList)
             if result is None:
-                return Response(
-                    "AI returned empty embedding",
-                    status=500
-                )
+                return jsonify({"error": "AI returned empty embedding"}), 400
+            
             # Quantize response q8_0(-1,1)
             embeddingMatrix = np.multiply(np.divide(np.subtract(result, -1), 2), 255).astype(np.uint8).tobytes(order='C')
             # Return response to client
@@ -266,77 +212,34 @@ async def process_vdh_request():
                 content_type='application/octet-stream',
             )
         except asyncio.CancelledError:
-            # Handle client canceled request
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            return Response(
-                "Client cancelled the VDH task",
-                status=499
-            )
+            return jsonify({"error": "Client cancelled the VDH task"}), 499
+        
     except Exception as e:
         # Handle uncaught exception
         logger.error(f"Error processing VDH request: {e}", exc_info=True)
-        return Response(
-            json.dumps({"error": {"message": str(e)}}), 
-            status=500, 
-            content_type='application/json'
-        )
+        return jsonify({"error": {"message": str(e)}}), 500
 
-async def serve_app(app, config):
-    print("Hypercorn server is starting")
-    try:
-        # Running the server, this will keep it alive until shutdown
-        await serve(app, config)
-    except Exception:
-        pass  # Gracefully handle the server shutdown here
-    finally:
-        await ai.shutdown()
-    print("Hypercorn server has stopped")
-
-async def main():
+if __name__ == '__main__':
     print(citation)
 
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+    from torch.cuda import is_available
+    if not is_available():
+        raise Exception("ROCm is not available")
+    
     # Start the worker thread.
     worker_thread = threading.Thread(target=ai.text_processor, daemon=True)
     worker_thread.start()
 
-    # Configuring webserver
     config = Config()
-    config.bind = ["0.0.0.0:7400"]
-    config.h2 = True
-    config.cors_allowed_origins = "*"
+    # Bind the server to a host and port.
+    config.bind = ["0.0.0.0:7500"]
+    # Enable HTTP/2 support (ALPN protocols).
+    config.alpn_protocols = ["h2", "http/1.1"]
+    # Enable TLS
     config.certfile = "/etc/ssl/certs/server.crt"
     config.keyfile = "/etc/ssl/private/server.key"
 
-    # Creating tasks
-    mainTask = asyncio.create_task(serve_app(app, config))
-
-    # Wait for tasks to finish
-    await asyncio.gather(mainTask)
-
-async def cancel_tasks(loop, msg):
-    print(msg)
-    # Cancel all tasks running in the event loop
-    for task in asyncio.all_tasks(loop):
-        task.cancel()
-    await asyncio.sleep(1)
-    loop.stop()
-
-if __name__ == '__main__':
-    if not is_available():
-        raise Exception("ROCm is not available")
-
-    # Register the signal handler for Ctrl+C (SIGINT) to cancel the running tasks
-    loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(cancel_tasks(loop, "SIGINT - Ctrl+C")))
-    loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(cancel_tasks(loop, "SIGTERM - Termination request")))
-    loop.add_signal_handler(signal.SIGHUP, lambda: asyncio.create_task(cancel_tasks(loop, "SIGHUP - Reload or restart signal")))
-
-    try:
-        # Run the main task in the event loop
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        print("Program interrupted by user.")
+    # Run the Hypercorn server with HTTP/2 support.
+    asyncio.run(serve(app, config))

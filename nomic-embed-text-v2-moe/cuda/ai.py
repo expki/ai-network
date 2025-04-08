@@ -110,7 +110,6 @@ def text_processor():
                         
                         # Combine all embeddings and convert to numpy
                         embeddings = torch.cat(embeddings_list, dim=0).numpy()
-                        torch.cuda.empty_cache()
                     else:
                         # Process all items at once (normal memory mode)
                         encoded_input = tokenizer(textList, padding=True, truncation=True, return_tensors='pt')
