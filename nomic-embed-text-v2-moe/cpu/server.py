@@ -24,6 +24,7 @@ Powered by nomic-embed-text-v2-moe (https://huggingface.co/nomic-ai/nomic-embed-
 }
 """
 
+import os
 import asyncio
 import logging
 import zstandard as zstd
@@ -31,6 +32,9 @@ import numpy as np
 import threading
 
 from quart import Quart, request, jsonify, Response
+from hypercorn.asyncio import serve
+from hypercorn.config import Config
+
 
 import ai
 
@@ -221,17 +225,20 @@ async def process_vdh_request():
 
 if __name__ == '__main__':
     print(citation)
-
-    from hypercorn.asyncio import serve
-    from hypercorn.config import Config
     
     # Start the worker thread.
     worker_thread = threading.Thread(target=ai.text_processor, daemon=True)
     worker_thread.start()
-
+    
     config = Config()
     # Bind the server to a host and port.
     config.bind = ["0.0.0.0:7500"]
+    # Connection settings
+    config.workers = min(4, os.cpu_count())
+    config.max_concurrency = 1000
+    config.backlog = 2048
+    config.keep_alive_timeout = 45
+    config.graceful_timeout = 5
     # Enable HTTP/2 support (ALPN protocols).
     config.alpn_protocols = ["h2", "http/1.1"]
     # Enable TLS
