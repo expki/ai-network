@@ -132,13 +132,13 @@ async def status_request():
         status=(102 if is_busy else 200)
     )
 
-@app.route('/id', methods=['GET'])
+@app.route('/devices', methods=['GET'])
 async def id_request():
     try:
         items = [{"name": processor(), "id": "cpu", "cores": str(cpu_count(logical=True)), "threads": str(cpu_count(logical=True))}]
         for i in range(device_count()):
             props = get_device_properties(i)
-            items.append({"name": props.name, "id": props.uuid})
+            items.append({"name": props.name, "id": str(props.uuid)})
         
         # Respond id
         return jsonify({
