@@ -38,7 +38,6 @@ from quart import Quart, request, jsonify, Response
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
 
-
 import ai
 
 # Configure logging
@@ -119,16 +118,18 @@ async def root_request():
     )
 
 @app.route('/status', methods=['GET'])
-async def status_request():
-    # Check if the processor is currently busy
-    is_busy = await ai.is_processing()
-    
-    # Respond status
-    return Response(
-        f"nomic-embed-text-v2-moe is {'busy' if is_busy else 'ready'}",
-        content_type='text/plain',
-        status=(102 if is_busy else 200)
-    )
+async def total_request():
+    try:
+        processing, total, pending = await ai.status()
+        # Respond total
+        return jsonify({
+            "processing": processing,
+            "total": total,
+            "queue": pending,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving status: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/devices', methods=['GET'])
 async def id_request():
@@ -140,19 +141,6 @@ async def id_request():
         }), 200
     except Exception as e:
         logger.error(f"Error retrieving device id: {e}", exc_info=True)
-        return jsonify({"error": {"message": str(e)}}), 500
-
-@app.route('/requests', methods=['GET'])
-async def total_request():
-    try:
-        total, pending = await ai.requests()
-        # Respond total
-        return jsonify({
-            "total": total,
-            "pending": pending,
-        }), 200
-    except Exception as e:
-        logger.error(f"Error retrieving requests: {e}", exc_info=True)
         return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/api/embedding', methods=['GET', 'POST']) # OpenAPI compatible
@@ -273,7 +261,7 @@ if __name__ == '__main__':
     # Start the worker thread.
     worker_thread = threading.Thread(target=ai.text_processor, daemon=True)
     worker_thread.start()
-    
+
     config = Config()
     # Bind the server to a host and port.
     config.bind = ["0.0.0.0:7500"]

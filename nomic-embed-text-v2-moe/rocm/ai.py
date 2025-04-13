@@ -28,8 +28,8 @@ logger = logging.getLogger('processor')
 # Shared objects between threads.
 text_queue = Queue(maxsize=2)
 
-processor_busy_lock = Lock()
-processor_busy = False
+processing_lock = Lock()
+processing = False
 
 total_requests = 0
 pending_requests = 0
@@ -37,7 +37,7 @@ pending_requests = 0
 # Worker function that processes text in the queue
 def text_processor():
     logger.info("Starting text processor")
-    global processor_busy
+    global processing
 
     import torch
     import torch.nn.functional as F
@@ -85,8 +85,8 @@ def text_processor():
             logger.info(f"{request_id}: received from queue")
             
             # Mark the processor as busy
-            with processor_busy_lock:
-                processor_busy = True
+            with processing_lock:
+                processing = True
             
             try:
                 # Autocast based on actual device type
@@ -130,11 +130,12 @@ def text_processor():
         except Exception as e:
             logger.error(f"Error in text processor: {str(e)}")
         finally:
-            with processor_busy_lock:
-                processor_busy = False
+            with processing_lock:
+                processing = False
 
 async def process_request(textList):
     global total_requests
+    global pending_requests
     loop = asyncio.get_running_loop()
     
     # Generate a unique request ID using UUID
@@ -162,14 +163,13 @@ async def process_request(textList):
     pending_requests -= 1
     return result
 
-async def is_processing() -> bool:
-    global processor_busy
-    with processor_busy_lock:
-        return processor_busy
-
-async def requests() -> tuple[int, int]:
+async def status() -> tuple[bool, int, int]:
+    global processing
     global total_requests
-    return total_requests, pending_requests
+    global pending_requests
+    
+    with processing_lock:
+        return processing, total_requests, pending_requests
 
 async def shutdown():
     text_queue.put((None, None, None))
