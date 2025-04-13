@@ -148,19 +148,21 @@ async def process_request(textList):
     logger.info(f"{request_id}: queueing request")
     pending_requests += 1
     try:
-        text_queue.put_nowait((request_id, textList, response_queue))
-    except Full:
-        logger.info(f"{request_id}: queue is full, waiting")
-        await loop.run_in_executor(None, text_queue.put, (request_id, textList, response_queue))
+        try:
+            text_queue.put_nowait((request_id, textList, response_queue))
+        except Full:
+            logger.info(f"{request_id}: queue is full, waiting")
+            await loop.run_in_executor(None, text_queue.put, (request_id, textList, response_queue))
 
-    # Since response_queue.get() is blocking and not awaitable,
-    # run it in an executor so it doesn't block the event loop.
-    result = await loop.run_in_executor(None, response_queue.get)
-    logger.info(f"{request_id}: received result")
+        # Since response_queue.get() is blocking and not awaitable,
+        # run it in an executor so it doesn't block the event loop.
+        result = await loop.run_in_executor(None, response_queue.get)
+        logger.info(f"{request_id}: received result")
+    finally:
+        pending_requests -= 1
 
     # Return result
     total_requests += 1
-    pending_requests -= 1
     return result
 
 async def status() -> tuple[bool, int, int]:

@@ -122,12 +122,12 @@ async def root_request():
 @app.route('/status', methods=['GET'])
 async def total_request():
     try:
-        processing, total, pending = await ai.status()
+        processing, total_requests, queued_requests = await ai.status()
         # Respond total
         return jsonify({
             "processing": processing,
-            "total": total,
-            "queue": pending,
+            "total": total_requests,
+            "queued": queued_requests,
         }), 200
     except Exception as e:
         logger.error(f"Error retrieving status: {e}", exc_info=True)

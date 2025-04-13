@@ -32,7 +32,7 @@ processing_lock = Lock()
 processing = False
 
 total_requests = 0
-pending_requests = 0
+queued_requests = 0
 
 # Worker function that processes text in the queue
 def text_processor():
@@ -143,7 +143,7 @@ def text_processor():
 
 async def process_request(textList):
     global total_requests
-    global pending_requests
+    global queued_requests
     loop = asyncio.get_running_loop()
     
     # Generate a unique request ID using UUID
@@ -154,30 +154,32 @@ async def process_request(textList):
 
     # Write to the queue
     logger.info(f"{request_id}: queueing request")
-    pending_requests += 1
+    queued_requests += 1
     try:
-        text_queue.put_nowait((request_id, textList, response_queue))
-    except Full:
-        logger.info(f"{request_id}: queue is full, waiting")
-        await loop.run_in_executor(None, text_queue.put, (request_id, textList, response_queue))
+        try:
+            text_queue.put_nowait((request_id, textList, response_queue))
+        except Full:
+            logger.info(f"{request_id}: queue is full, waiting")
+            await loop.run_in_executor(None, text_queue.put, (request_id, textList, response_queue))
 
-    # Since response_queue.get() is blocking and not awaitable,
-    # run it in an executor so it doesn't block the event loop.
-    result = await loop.run_in_executor(None, response_queue.get)
-    logger.info(f"{request_id}: received result")
+        # Since response_queue.get() is blocking and not awaitable,
+        # run it in an executor so it doesn't block the event loop.
+        result = await loop.run_in_executor(None, response_queue.get)
+        logger.info(f"{request_id}: received result")
+    finally:
+        queued_requests -= 1
 
     # Return result
     total_requests += 1
-    pending_requests -= 1
     return result
 
 async def status() -> tuple[bool, int, int]:
     global processing
     global total_requests
-    global pending_requests
+    global queued_requests
     
     with processing_lock:
-        return processing, total_requests, pending_requests
+        return processing, total_requests, queued_requests
 
 async def shutdown():
     text_queue.put((None, None, None))
