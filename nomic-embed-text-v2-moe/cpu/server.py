@@ -142,15 +142,17 @@ async def id_request():
         logger.error(f"Error retrieving device id: {e}", exc_info=True)
         return jsonify({"error": {"message": str(e)}}), 500
 
-@app.route('/total', methods=['GET'])
+@app.route('/requests', methods=['GET'])
 async def total_request():
-    try:        
+    try:
+        total, pending = await ai.requests()
         # Respond total
         return jsonify({
-            "total": await ai.total()
+            "total": total,
+            "pending": pending,
         }), 200
     except Exception as e:
-        logger.error(f"Error retrieving total: {e}", exc_info=True)
+        logger.error(f"Error retrieving requests: {e}", exc_info=True)
         return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/api/embedding', methods=['GET', 'POST']) # OpenAPI compatible

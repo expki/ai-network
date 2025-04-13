@@ -32,6 +32,7 @@ processor_busy_lock = Lock()
 processor_busy = False
 
 total_requests = 0
+pending_requests = 0
 
 # Worker function that processes text in the queue
 def text_processor():
@@ -138,6 +139,7 @@ async def process_request(textList):
 
     # Write to the queue
     logger.info(f"{request_id}: queueing request")
+    pending_requests += 1
     try:
         text_queue.put_nowait((request_id, textList, response_queue))
     except Full:
@@ -151,6 +153,7 @@ async def process_request(textList):
 
     # Return result
     total_requests += 1
+    pending_requests -= 1
     return result
 
 async def is_processing() -> bool:
@@ -158,9 +161,9 @@ async def is_processing() -> bool:
     with processor_busy_lock:
         return processor_busy
 
-async def total() -> int:
+async def requests() -> tuple[int, int]:
     global total_requests
-    return total_requests
+    return total_requests, pending_requests
 
 async def shutdown():
     text_queue.put((None, None, None))
