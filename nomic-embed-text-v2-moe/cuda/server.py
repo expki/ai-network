@@ -147,6 +147,17 @@ async def id_request():
         logger.error(f"Error retrieving device id: {e}", exc_info=True)
         return jsonify({"error": {"message": str(e)}}), 500
 
+@app.route('/total', methods=['GET'])
+async def total_request():
+    try:        
+        # Respond total
+        return jsonify({
+            "total": await ai.total()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving total: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
+
 @app.route('/api/embedding', methods=['GET', 'POST']) # OpenAPI compatible
 async def process_openapi_request():
     try:
@@ -272,7 +283,6 @@ if __name__ == '__main__':
     # Bind the server to a host and port.
     config.bind = ["0.0.0.0:7500"]
     # Connection settings
-    config.workers = min(4, os.cpu_count())
     config.max_concurrency = 1000
     config.backlog = 2048
     config.keep_alive_timeout = 45

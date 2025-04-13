@@ -17,6 +17,7 @@ import logging
 import warnings
 import os
 from queue import Queue, Full
+from threading import Lock
 
 # Ignore all deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -26,7 +27,11 @@ logger = logging.getLogger('processor')
 
 # Shared objects between threads.
 text_queue = Queue(maxsize=2)
+
+processor_busy_lock = Lock()
 processor_busy = False
+
+total_requests = 0
 
 # Worker function that processes text in the queue
 def text_processor():
@@ -79,7 +84,8 @@ def text_processor():
             logger.info(f"{request_id}: received from queue")
             
             # Mark the processor as busy
-            processor_busy = True
+            with processor_busy_lock:
+                processor_busy = True
             
             try:
                 # Autocast based on actual device type
@@ -123,9 +129,11 @@ def text_processor():
         except Exception as e:
             logger.error(f"Error in text processor: {str(e)}")
         finally:
-            processor_busy = False
+            with processor_busy_lock:
+                processor_busy = False
 
 async def process_request(textList):
+    global total_requests
     loop = asyncio.get_running_loop()
     
     # Generate a unique request ID using UUID
@@ -148,10 +156,17 @@ async def process_request(textList):
     logger.info(f"{request_id}: received result")
 
     # Return result
+    total_requests += 1
     return result
 
 async def is_processing() -> bool:
-    return processor_busy
+    global processor_busy
+    with processor_busy_lock:
+        return processor_busy
+
+async def total() -> int:
+    global total_requests
+    return total_requests
 
 async def shutdown():
     text_queue.put((None, None, None))

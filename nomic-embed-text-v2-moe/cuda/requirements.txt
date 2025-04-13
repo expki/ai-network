@@ -12,3 +12,4 @@ quart
 stanford-stk
 triton
 zstandard
+psutil

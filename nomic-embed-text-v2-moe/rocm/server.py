@@ -120,6 +120,18 @@ async def root_request():
         status=200
     )
 
+@app.route('/status', methods=['GET'])
+async def status_request():
+    # Check if the processor is currently busy
+    is_busy = await ai.is_processing()
+    
+    # Respond status
+    return Response(
+        f"nomic-embed-text-v2-moe is {'busy' if is_busy else 'ready'}",
+        content_type='text/plain',
+        status=(102 if is_busy else 200)
+    )
+
 @app.route('/id', methods=['GET'])
 async def id_request():
     try:
@@ -135,18 +147,17 @@ async def id_request():
     except Exception as e:
         logger.error(f"Error retrieving device id: {e}", exc_info=True)
         return jsonify({"error": {"message": str(e)}}), 500
-
-@app.route('/status', methods=['GET'])
-async def status_request():
-    # Check if the processor is currently busy
-    is_busy = await ai.is_processing()
     
-    # Respond status
-    return Response(
-        f"nomic-embed-text-v2-moe is {'busy' if is_busy else 'ready'}",
-        content_type='text/plain',
-        status=(102 if is_busy else 200)
-    )
+@app.route('/total', methods=['GET'])
+async def total_request():
+    try:        
+        # Respond total
+        return jsonify({
+            "total": await ai.total()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving total: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/api/embedding', methods=['GET', 'POST']) # OpenAPI compatible
 async def process_openapi_request():
@@ -273,7 +284,6 @@ if __name__ == '__main__':
     # Bind the server to a host and port.
     config.bind = ["0.0.0.0:7500"]
     # Connection settings
-    config.workers = min(4, os.cpu_count())
     config.max_concurrency = 1000
     config.backlog = 2048
     config.keep_alive_timeout = 45

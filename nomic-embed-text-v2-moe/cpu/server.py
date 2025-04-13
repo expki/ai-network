@@ -24,7 +24,6 @@ Powered by nomic-embed-text-v2-moe (https://huggingface.co/nomic-ai/nomic-embed-
 }
 """
 
-import os
 import asyncio
 import logging
 import zstandard as zstd
@@ -110,18 +109,6 @@ async def compress_response(response):
             app.logger.error(f"Response compression failed: {e}")
     return response
 
-@app.route('/id', methods=['GET'])
-async def id_request():
-    try:
-        items = [{"name": processor(), "id": "cpu", "cores": str(cpu_count(logical=True)), "threads": str(cpu_count(logical=True))}]
-        # Respond id
-        return jsonify({
-            "devices": items
-        }), 200
-    except Exception as e:
-        logger.error(f"Error retrieving device id: {e}", exc_info=True)
-        return jsonify({"error": {"message": str(e)}}), 500
-
 @app.route('/', methods=['GET'])
 async def root_request():
     # Always respond
@@ -142,6 +129,29 @@ async def status_request():
         content_type='text/plain',
         status=(102 if is_busy else 200)
     )
+
+@app.route('/id', methods=['GET'])
+async def id_request():
+    try:
+        items = [{"name": processor(), "id": "cpu", "cores": str(cpu_count(logical=True)), "threads": str(cpu_count(logical=True))}]
+        # Respond id
+        return jsonify({
+            "devices": items
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving device id: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
+
+@app.route('/total', methods=['GET'])
+async def total_request():
+    try:        
+        # Respond total
+        return jsonify({
+            "total": await ai.total()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving total: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/api/embedding', methods=['GET', 'POST']) # OpenAPI compatible
 async def process_openapi_request():
@@ -266,7 +276,6 @@ if __name__ == '__main__':
     # Bind the server to a host and port.
     config.bind = ["0.0.0.0:7500"]
     # Connection settings
-    config.workers = min(4, os.cpu_count())
     config.max_concurrency = 1000
     config.backlog = 2048
     config.keep_alive_timeout = 45
