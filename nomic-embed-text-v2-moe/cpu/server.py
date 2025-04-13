@@ -30,6 +30,10 @@ import logging
 import zstandard as zstd
 import numpy as np
 import threading
+import json
+
+from platform import processor
+from psutil import cpu_count
 
 from quart import Quart, request, jsonify, Response
 from hypercorn.asyncio import serve
@@ -57,19 +61,35 @@ async def shutdown():
 # Middleware to decompress request data if Content-Encoding is zstd.
 @app.before_request
 async def decompress_request():
-    encoding = request.headers.get("Content-Encoding", "").strip().lower()
-    if encoding == "zstd":
-        # Read the raw request data
-        raw_data = await request.get_data()
+    data = None
+    json_data = None
+
+    # Read
+    try:
+        data = await request.get_data()
+        if data == b'':
+            data = None
+    except:
+        data = None
+
+    # Decompress
+    if request.headers.get("Content-Encoding", "").strip().lower() == "zstd":
         try:
             decompressor = zstd.ZstdDecompressor()
-            # Decompress the data
-            decompressed = decompressor.decompress(raw_data)
-            # Store decompressed data in the internal cache
-            # Use request.get_json()/request.get_data() to retrieve
-            request._cached_data = decompressed
+            data = decompressor.decompress(data)
         except Exception as e:
             return jsonify({"error": f"failed to decompress request body: {e}"}), 400
+    
+    # JSON
+    if data != None:
+        try:
+            json_data = json.loads(data)
+        except json.JSONDecodeError:
+            json_data = None
+
+    # Store
+    request._cached_data = data
+    request._cached_json = json_data
 
 # Middleware to compress response data if the client accepts zstd encoding.
 @app.after_request
@@ -89,6 +109,18 @@ async def compress_response(response):
             # If compression fails, log the error or take alternative action.
             app.logger.error(f"Response compression failed: {e}")
     return response
+
+@app.route('/id', methods=['GET'])
+async def id_request():
+    try:
+        items = [{"name": processor(), "id": "cpu", "cores": str(cpu_count(logical=True)), "threads": str(cpu_count(logical=True))}]
+        # Respond id
+        return jsonify({
+            "devices": items
+        }), 200
+    except Exception as e:
+        logger.error(f"Error retrieving device id: {e}", exc_info=True)
+        return jsonify({"error": {"message": str(e)}}), 500
 
 @app.route('/', methods=['GET'])
 async def root_request():
@@ -115,7 +147,7 @@ async def status_request():
 async def process_openapi_request():
     try:
         # Parse the JSON request
-        data = await request.get_json()
+        data = getattr(request, '_cached_json', None)
         if data is None:
             return jsonify({"error": {"message": "Missing request body"}}), 400
 
@@ -152,7 +184,7 @@ async def process_openapi_request():
 async def process_ollama_request():
     try:
         # Parse the JSON request
-        data = await request.get_json()
+        data = getattr(request, '_cached_json', None)
         if data is None:
             return jsonify({"error": {"message": "Missing request body"}}), 400
 
@@ -188,7 +220,7 @@ async def process_ollama_request():
 async def process_vdh_request():
     try:
         # Parse the JSON request
-        data = await request.get_json()
+        data = getattr(request, '_cached_json', None)
         if data is None:
             return jsonify({"error": "Missing request body"}), 400
 
