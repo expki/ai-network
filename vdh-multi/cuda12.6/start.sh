@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Trap SIGINT (Ctrl+C) and SIGTERM to cleanly stop all processes
+trap 'echo "Stopping all services..."; kill $(jobs -p) 2>/dev/null; exit' INT TERM
+
 # Set default values for runtime environment variables
 : ${THREADS:=8}
 : ${THREADS_BATCH:=8}
