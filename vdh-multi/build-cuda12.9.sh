@@ -7,6 +7,7 @@ CACHE_VOLUME="temp-$TAG-cmake"
 
 # Build Golang
 go build -o "$TAG/llama-proxy" .
+cp -f .start.sh "$TAG/start.sh"
 
 # Create Docker volume for ccache if it doesn't exist
 if ! docker volume inspect "${CACHE_VOLUME}" >/dev/null 2>&1; then
