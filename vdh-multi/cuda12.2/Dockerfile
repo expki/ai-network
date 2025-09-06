@@ -97,7 +97,7 @@ RUN hf download ${MODEL_REPO_EMBED} \
         rm /app/models/${MODEL_FILE_EMBED}-*-of-*; \
         echo "Merged split file into: ${MODEL_FILE_EMBED}"; \
     fi
-RUN hf download ${MODEL_REPO_EMBED} \
+RUN hf download ${MODEL_REPO_RERANK} \
     --include "${MODEL_FILE_RERANK}*" \
     --local-dir /app/models && \
     echo "Model downloaded: ${MODEL_FILE_RERANK}" && \
