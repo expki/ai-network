@@ -229,7 +229,6 @@ curl -k -X POST https://localhost:5000/detokenize \
 ### With Compression
 
 ```bash
-# Request with compressed response
 echo '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}' | zstd | \
   curl -k -X POST https://localhost:5000/v1/chat/completions \
     -H "Content-Encoding: zstd" \
@@ -238,6 +237,20 @@ echo '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}' |
     -H "Authorization: Bearer your-token" \
     --compressed \
     --data-binary @- | jq
+```
+
+### With Binary Encoding
+
+```bash
+curl -k -X POST https://localhost:5000/v1/chat/completions \
+  -H "Encode-Binary: false" \
+  -H "Accept-Binary: true" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "model": "llama",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }' | jq
 ```
 
 ## Architecture
