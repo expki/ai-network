@@ -6,13 +6,18 @@ trap 'echo "Stopping all services..."; kill $(jobs -p) 2>/dev/null; exit' INT TE
 # Set default values for runtime environment variables
 : ${THREADS:=8}
 : ${THREADS_BATCH:=8}
-: ${PARALLEL:=4}
 : ${N_GPU_LAYERS:=9999}
 : ${CACHE_TYPE_K:=q4_0}
 : ${CACHE_TYPE_V:=q8_0}
 # Set ctx-size default to -1 (use model default) if not specified
-: ${CTX_SIZE:=-1}
-: ${BATCH_SIZE:=512}
+: ${CTX_SIZE_CHAT:=-1}
+: ${CTX_SIZE_RERANK:=-1}
+: ${BATCH_SIZE_CHAT:=512}
+: ${BATCH_SIZE_EMBED:=2048}
+: ${BATCH_SIZE_RERANK:=2048}
+: ${PARALLEL_CHAT:=2}
+: ${PARALLEL_EMBED:=8}
+: ${PARALLEL_RERANK:=4}
 
 echo "Starting llama-proxy in background..."
 # Run llama-proxy in background with output to stderr so we can see both services
@@ -23,11 +28,11 @@ if [ -n "${MODEL_PATH_CHAT}" ]; then
   echo "Starting llama-server for chat model on port 5001..."
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_CHAT} \
-    --batch-size ${BATCH_SIZE} \
-    --ctx-size ${CTX_SIZE} \
+    --batch-size ${BATCH_SIZE_CHAT} \
+    --ctx-size ${CTX_SIZE_CHAT} \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL} \
+    --parallel ${PARALLEL_CHAT} \
     --n-gpu-layers ${N_GPU_LAYERS} \
     --flash-attn on \
     --cache-type-k ${CACHE_TYPE_K} \
@@ -44,15 +49,15 @@ if [ -n "${MODEL_PATH_EMBED}" ]; then
   echo "Starting llama-server for embedding model on port 5002..."
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_EMBED} \
-    --batch-size ${BATCH_SIZE} \
-    --ctx-size ${CTX_SIZE} \
+    --batch-size ${BATCH_SIZE_EMBED} \
+    --ctx-size -1 \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL} \
+    --parallel ${PARALLEL_EMBED} \
     --n-gpu-layers ${N_GPU_LAYERS} \
     --flash-attn on \
     --host localhost \
-    --port 8080 \
+    --port 5002 \
     --cont-batching \
     --metrics \
     --embeddings \
@@ -65,15 +70,15 @@ if [ -n "${MODEL_PATH_RERANK}" ]; then
   echo "Starting llama-server for reranking model on port 5003..."
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_RERANK} \
-    --batch-size ${BATCH_SIZE} \
-    --ctx-size ${CTX_SIZE} \
+    --batch-size ${BATCH_SIZE_RERANK} \
+    --ctx-size ${CTX_SIZE_RERANK} \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL} \
+    --parallel ${PARALLEL_RERANK} \
     --n-gpu-layers ${N_GPU_LAYERS} \
     --flash-attn on \
     --host localhost \
-    --port 8080 \
+    --port 5003 \
     --cont-batching \
     --metrics \
     --reranking \
