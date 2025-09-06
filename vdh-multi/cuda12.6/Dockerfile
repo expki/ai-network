@@ -66,10 +66,10 @@ WORKDIR /app
 # Supports both single-file and multipart/split GGUF downloads
 ARG MODEL_REPO_CHAT="unsloth/gemma-3-12b-it-GGUF"
 ARG MODEL_FILE_CHAT="gemma-3-12b-it-UD-Q4_K_XL.gguf"
-ARG MODEL_REPO_EMBED="unsloth/gemma-3-12b-it-GGUF"
-ARG MODEL_FILE_EMBED="gemma-3-12b-it-UD-Q4_K_XL.gguf"
-ARG MODEL_REPO_RERANK="unsloth/gemma-3-12b-it-GGUF"
-ARG MODEL_FILE_RERANK="gemma-3-12b-it-UD-Q4_K_XL.gguf"
+ARG MODEL_REPO_EMBED="unsloth/embeddinggemma-300m-GGUF"
+ARG MODEL_FILE_EMBED="embeddinggemma-300M-BF16.gguf"
+ARG MODEL_REPO_RERANK="mradermacher/jina-reranker-v1-tiny-en-GGUF"
+ARG MODEL_FILE_RERANK="jina-reranker-v1-tiny-en.f16.gguf"
 
 # Download model files - supports multipart GGUF files
 # Note: llama.cpp can use split GGUF files directly, but we merge them for simplicity
