@@ -144,7 +144,7 @@ docker build \
 
 Basic usage with GPU support:
 ```bash
-docker run -p 5000:5000 --gpus all vdh/vdh-multi:cuda12.6
+docker run -p 5000:5000 --gpus all -it vdh/vdh-multi:cuda12.6
 ```
 
 With custom configuration:
@@ -173,7 +173,7 @@ curl -k -X POST https://localhost:5000/v1/chat/completions \
   -d '{
     "model": "llama",
     "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+  }' | jq
 ```
 
 ### Embeddings
@@ -186,7 +186,7 @@ curl -k -X POST https://localhost:5000/v1/embeddings \
   -d '{
     "input": "Text to embed",
     "model": "embedding"
-  }'
+  }' | jq
 ```
 
 ### Reranking
@@ -199,7 +199,7 @@ curl -k -X POST https://localhost:5000/v1/rerank \
   -d '{
     "query": "search query",
     "documents": ["doc1", "doc2", "doc3"]
-  }'
+  }' | jq
 ```
 
 ### Tokenize
@@ -211,7 +211,7 @@ curl -k -X POST https://localhost:5000/tokenize \
   -H "Authorization: Bearer your-token" \
   -d '{
     "content": "Hello world"
-  }'
+  }' | jq
 ```
 
 ### Detokenize
@@ -223,7 +223,7 @@ curl -k -X POST https://localhost:5000/detokenize \
   -H "Authorization: Bearer your-token" \
   -d '{
     "tokens": [1, 2, 3, 4]
-  }'
+  }' | jq
 ```
 
 ### With Compression
@@ -237,7 +237,7 @@ echo '{"model": "llama", "messages": [{"role": "user", "content": "Hello!"}]}' |
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer your-token" \
     --compressed \
-    --data-binary @- 
+    --data-binary @- | jq
 ```
 
 ## Architecture

@@ -108,7 +108,11 @@ func decompressRequest(r *http.Request) error {
 			reader: reader,
 			closer: r.Body,
 		}
-		r.ContentLength = -1 // Unknown after decompression
+		// Set ContentLength to -1 to indicate unknown length after decompression
+		// This will force chunked transfer encoding to upstream
+		r.ContentLength = -1
+		// Remove Content-Length header to ensure it's not sent with incorrect value
+		r.Header.Del("Content-Length")
 		r.Header.Del("Content-Encoding")
 	}
 	return nil
@@ -234,17 +238,24 @@ func createReverseProxy(chatTarget, embedTarget, rerankTarget *url.URL) *httputi
 				log.Printf("Failed to decompress request: %v", err)
 			}
 
-			acceptEncoding := req.Header.Get("Accept-Encoding")
-			if strings.Contains(strings.ToLower(acceptEncoding), "zstd") {
-				req.Header.Set("Accept-Encoding", "zstd")
-			} else {
-				req.Header.Del("Accept-Encoding")
-			}
+			// Never send Accept-Encoding to upstream to prevent upstream compression
+			req.Header.Del("Accept-Encoding")
 
 			req.Header.Del("Authorization")
 			req.Host = target.Host
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			// Since we don't send Accept-Encoding to upstream,
+			// the response should never be compressed.
+			// Remove any Content-Length header as the compression middleware
+			// will handle the response encoding if needed
+			if resp.Request != nil {
+				// Get the original client's Accept-Encoding from the request context
+				// The compression middleware will handle compression based on this
+				resp.Header.Del("Content-Length")
+				resp.ContentLength = -1
+			}
+
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
