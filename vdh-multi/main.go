@@ -134,10 +134,6 @@ type zstdResponseWriter struct {
 }
 
 func (w *zstdResponseWriter) Write(b []byte) (int, error) {
-	if w.Header().Get("Content-Encoding") == "" {
-		w.Header().Set("Content-Encoding", "zstd")
-		w.Header().Del("Content-Length")
-	}
 	return w.writer.Write(b)
 }
 
@@ -169,6 +165,10 @@ func compressionMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+
+			// Set Content-Encoding header before creating the response writer
+			w.Header().Set("Content-Encoding", "zstd")
+			w.Header().Del("Content-Length")
 
 			zw := &zstdResponseWriter{
 				ResponseWriter: w,
@@ -202,13 +202,18 @@ func createReverseProxy(chatTarget, embedTarget, rerankTarget *url.URL) *httputi
 			var target *url.URL
 
 			path := req.URL.Path
-			if chatPattern.MatchString(path) {
+			queryType := req.Header.Get("Query-Type")
+			if queryType != "" {
+				req.Header.Del(queryType)
+			}
+
+			if strings.EqualFold(queryType, "chat") || (queryType == "" && chatPattern.MatchString(path)) {
 				log.Println("Chat query detected")
 				target = chatTarget
-			} else if embedPattern.MatchString(path) {
+			} else if strings.EqualFold(queryType, "embed") || queryType == "" && embedPattern.MatchString(path) {
 				log.Println("Embed query detected")
 				target = embedTarget
-			} else if rerankPattern.MatchString(path) {
+			} else if strings.EqualFold(queryType, "rerank") || queryType == "" && rerankPattern.MatchString(path) {
 				log.Println("Rerank query detected")
 				target = rerankTarget
 			} else {

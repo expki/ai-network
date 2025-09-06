@@ -133,10 +133,6 @@ type zstdResponseWriter struct {
 }
 
 func (w *zstdResponseWriter) Write(b []byte) (int, error) {
-	if w.Header().Get("Content-Encoding") == "" {
-		w.Header().Set("Content-Encoding", "zstd")
-		w.Header().Del("Content-Length")
-	}
 	return w.writer.Write(b)
 }
 
@@ -168,6 +164,10 @@ func compressionMiddleware(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+
+			// Set Content-Encoding header before creating the response writer
+			w.Header().Set("Content-Encoding", "zstd")
+			w.Header().Del("Content-Length")
 
 			zw := &zstdResponseWriter{
 				ResponseWriter: w,
