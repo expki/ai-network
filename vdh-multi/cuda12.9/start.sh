@@ -19,9 +19,9 @@ trap cleanup INT TERM
 : ${N_GPU_LAYERS:=9999}
 : ${CACHE_TYPE_K:=q4_0}
 : ${CACHE_TYPE_V:=q8_0}
-# Set ctx-size default to -1 (use model default) if not specified
-: ${CTX_SIZE_CHAT:=-1}
-: ${CTX_SIZE_RERANK:=-1}
+: ${CTX_SIZE_CHAT:=16384}
+: ${CTX_SIZE_EMBED:=16384}
+: ${CTX_SIZE_RERANK:=32768}
 : ${BATCH_SIZE_CHAT:=512}
 : ${BATCH_SIZE_EMBED:=2048}
 : ${BATCH_SIZE_RERANK:=2048}
@@ -65,7 +65,7 @@ if [ -n "${MODEL_PATH_EMBED}" ]; then
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_EMBED} \
     --batch-size ${BATCH_SIZE_EMBED} \
-    --ctx-size -1 \
+    --ctx-size ${CTX_SIZE_EMBED} \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
     --parallel ${PARALLEL_EMBED} \
