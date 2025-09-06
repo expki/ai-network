@@ -3,7 +3,7 @@
 # Default values
 IMAGE_NAME="vdh/embeddinggemma-300m"
 TAG="cuda12.9"
-CACHE_VOLUME="temp-vdh-embeddinggemma-300m-$TAG-cmake"
+CACHE_VOLUME="temp-$TAG-cmake"
 
 # Build Golang
 go build -o "$TAG/llama-proxy" .

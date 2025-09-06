@@ -3,7 +3,7 @@
 # Default values
 IMAGE_NAME="vdh/qwen3-235b-a22b-instruct-2507"
 TAG="cuda12.6"
-CACHE_VOLUME="temp-vdh-qwen3-235b-a22b-instruct-2507-$TAG-cmake"
+CACHE_VOLUME="temp-$TAG-cmake"
 
 # Build Golang
 go build -o "$TAG/llama-proxy" .
