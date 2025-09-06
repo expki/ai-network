@@ -9,6 +9,7 @@
 : ${CACHE_TYPE_V:=q8_0}
 # Set ctx-size default to -1 (use model default) if not specified
 : ${CTX_SIZE:=-1}
+: ${BATCH_SIZE:=512}
 
 echo "Starting llama-proxy in background..."
 # Run llama-proxy in background with output to stderr so we can see both services
@@ -17,6 +18,7 @@ TARGET_URL=http://localhost:8080 LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>
 echo "Starting llama-server..."
 /usr/local/bin/llama-server \
   --model ${MODEL_PATH} \
+  --batch-size ${BATCH_SIZE} \
   --ctx-size ${CTX_SIZE} \
   --threads ${THREADS} \
   --threads-batch ${THREADS_BATCH} \

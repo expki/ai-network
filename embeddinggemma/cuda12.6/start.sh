@@ -15,7 +15,7 @@ echo "Starting llama-proxy in background..."
 # Run llama-proxy in background with output to stderr so we can see both services
 TARGET_URL=http://localhost:8080 LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
 
-echo "Starting llama-server..."
+echo "Starting llama-server with embedding support..."
 /usr/local/bin/llama-server \
   --model ${MODEL_PATH} \
   --batch-size ${BATCH_SIZE} \
@@ -25,10 +25,10 @@ echo "Starting llama-server..."
   --parallel ${PARALLEL} \
   --n-gpu-layers ${N_GPU_LAYERS} \
   --flash-attn on \
-  --cache-type-k ${CACHE_TYPE_K} \
-  --cache-type-v ${CACHE_TYPE_V} \
   --host localhost \
   --port 8080 \
   --cont-batching \
   --metrics \
+  --embeddings \
+  --pooling cls \
   "$@"
