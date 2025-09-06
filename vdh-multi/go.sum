@@ -1,2 +1,4 @@
+github.com/expki/calculator/lib v0.0.0-20250602195343-636d0716ef59 h1:h1TRnjmeBE4J0ABFBbOM/UMnZdNDzcRqm8tP158Bjdw=
+github.com/expki/calculator/lib v0.0.0-20250602195343-636d0716ef59/go.mod h1:QiL5wc9zWcEo04nH2aM4DU12wxT/gQKH2+Z2T/6+lN0=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
 github.com/klauspost/compress v1.18.0/go.mod h1:2Pp+KzxcywXVXMr50+X0Q/Lsb43OQHYWRCY2AiWywWQ=
