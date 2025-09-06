@@ -1,7 +1,17 @@
 #!/bin/bash
 
+# Function to cleanup all processes
+cleanup() {
+    echo "Stopping all services..."
+    # Kill all child processes
+    pkill -P $$
+    # Kill any remaining jobs
+    kill $(jobs -p) 2>/dev/null
+    exit
+}
+
 # Trap SIGINT (Ctrl+C) and SIGTERM to cleanly stop all processes
-trap 'echo "Stopping all services..."; kill $(jobs -p) 2>/dev/null; exit' INT TERM
+trap cleanup INT TERM
 
 # Set default values for runtime environment variables
 : ${THREADS:=8}
@@ -19,9 +29,13 @@ trap 'echo "Stopping all services..."; kill $(jobs -p) 2>/dev/null; exit' INT TE
 : ${PARALLEL_EMBED:=8}
 : ${PARALLEL_RERANK:=4}
 
+# Array to store PIDs
+declare -a PIDS=()
+
 echo "Starting llama-proxy in background..."
 # Run llama-proxy in background with output to stderr so we can see both services
 TARGET_URL_CHAT=http://localhost:5001 TARGET_URL_EMBED=http://localhost:5002 TARGET_URL_RERANK=http://localhost:5003 LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
+PIDS+=($!)
 
 # Start chat model server
 if [ -n "${MODEL_PATH_CHAT}" ]; then
@@ -42,6 +56,7 @@ if [ -n "${MODEL_PATH_CHAT}" ]; then
     --cont-batching \
     --metrics \
     "$@" 2>&1 | sed "s/^/[chat-5001] /" >&2 &
+  PIDS+=($!)
 fi
 
 # Start embedding model server
@@ -63,6 +78,7 @@ if [ -n "${MODEL_PATH_EMBED}" ]; then
     --embeddings \
     --pooling cls \
     "$@" 2>&1 | sed "s/^/[embed-5002] /" >&2 &
+  PIDS+=($!)
 fi
 
 # Start reranking model server
@@ -83,7 +99,17 @@ if [ -n "${MODEL_PATH_RERANK}" ]; then
     --metrics \
     --reranking \
     "$@" 2>&1 | sed "s/^/[rerank-5003] /" >&2 &
+  PIDS+=($!)
 fi
 
-# Wait for all background processes
-wait
+# Monitor all processes - if any dies, kill all and exit
+echo "Monitoring processes: ${PIDS[@]}"
+while true; do
+    for pid in "${PIDS[@]}"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "Process $pid terminated. Stopping all services..."
+            cleanup
+        fi
+    done
+    sleep 1
+done
