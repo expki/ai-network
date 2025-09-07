@@ -36,6 +36,10 @@ RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     -DCMAKE_CUDA_FLAGS="-O3 -use_fast_math -L/usr/local/cuda/lib64/stubs" \
     -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -O3" \
     -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda"
+RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
+    ccache -s && \
+    cmake --build build --config Release -j$(nproc) && \
+    ccache -s
 
 # Stage 2: Runtime stage
 FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
