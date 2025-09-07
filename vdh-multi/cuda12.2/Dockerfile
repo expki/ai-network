@@ -32,27 +32,19 @@ WORKDIR /build/llama.cpp
 ENV CUDA_DOCKER_ARCH=all
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     cmake -B build \
+    -DGGML_NATIVE=OFF \
     -DGGML_CUDA=ON \
+    -DGGML_BACKEND_DL=ON \
+    -DGGML_CPU_ALL_VARIANTS=ON \
+    -DLLAMA_BUILD_TESTS=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="86;89" \
-    -DGGML_CUDA_FA_ALL_QUANTS=ON \
-    -DGGML_CUDA_F16C=ON \
-    -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CUDA_FLAGS="-O3 -use_fast_math -L/usr/local/cuda/lib64/stubs" \
-    -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -O3" \
-    -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda"
+    -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined .
+
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
-    ccache -s && \
-    cmake --build build --config Release -j$(nproc) && \
-    ccache -s
+    cmake --build build --config Release -j$(nproc)
 
-# Copy ALL libraries from build/bin directory (where they're actually built)
-RUN cp /build/llama.cpp/build/bin/*.so* /usr/local/lib/ || true
-# Copy executables (including gguf-split for merging multipart files)
-RUN cp /build/llama.cpp/build/bin/* /usr/local/bin/
-
-# Set library path - /usr/lib/x86_64-linux-gnu comes first for real CUDA driver when using --gpus
-ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+RUN find build -name "*.so" -exec cp {} /usr/local/lib \;
+RUN cp -f build/bin/* /usr/local/bin
 
 # Create working directory
 WORKDIR /app
