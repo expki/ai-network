@@ -26,9 +26,15 @@ WORKDIR /build/llama.cpp
 # Link against CUDA driver stub for build time
 ENV CUDA_DOCKER_ARCH=all
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
-    cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="86;89;90;100;120" \
+    cmake -B build \
+    -DGGML_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="86;89;90;100;120" \
     -DGGML_CUDA_FA_ALL_QUANTS=ON \
-    -DCMAKE_CUDA_FLAGS="-L/usr/local/cuda/lib64/stubs" \
+    -DGGML_CUDA_F16C=ON \
+    -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_FLAGS="-O3 -use_fast_math -L/usr/local/cuda/lib64/stubs" \
+    -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -O3" \
     -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda"
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     ccache -s && \
@@ -62,8 +68,8 @@ WORKDIR /app
 # Download a GGUF model from Hugging Face using hf CLI (using a small model as default)
 # You can change this to any GGUF model from Hugging Face
 # Supports both single-file and multipart/split GGUF downloads
-ARG MODEL_REPO_CHAT="unsloth/gemma-3-4b-it-qat-GGUF"
-ARG MODEL_FILE_CHAT="gemma-3-4b-it-qat-UD-Q4_K_XL.gguf"
+ARG MODEL_REPO_CHAT="unsloth/gemma-3-270m-it-qat-GGUF"
+ARG MODEL_FILE_CHAT="gemma-3-270m-it-qat-F16.gguf"
 ARG MODEL_REPO_EMBED="unsloth/embeddinggemma-300m-GGUF"
 ARG MODEL_FILE_EMBED="embeddinggemma-300M-BF16.gguf"
 ARG MODEL_REPO_RERANK="mradermacher/jina-reranker-v1-tiny-en-GGUF"

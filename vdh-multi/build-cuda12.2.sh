@@ -6,7 +6,7 @@ TAG="cuda12.2"
 CACHE_VOLUME="temp-$TAG-cmake"
 
 # Build Golang
-go build -o "$TAG/llama-proxy" .
+GOAMD64=v3 GOOS=linux GOARCH=amd64 go build -o "$TAG/llama-proxy" .
 cp -f .start.sh "$TAG/start.sh"
 
 # Create Docker volume for ccache if it doesn't exist
