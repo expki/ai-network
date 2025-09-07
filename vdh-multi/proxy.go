@@ -15,12 +15,22 @@ var (
 	rerankPattern = regexp.MustCompile(`/(?:v1/)?rerank(?:ing)?/?$`)
 )
 
-func createReverseProxy(chatTarget, embedTarget, rerankTarget *url.URL) *httputil.ReverseProxy {
-	return &httputil.ReverseProxy{
+func createReverseProxy(chatTarget, embedTarget, rerankTarget *url.URL) http.Handler {
+	proxy := &httputil.ReverseProxy{
 		Director:       createDirector(chatTarget, embedTarget, rerankTarget),
 		ModifyResponse: modifyResponse,
 		ErrorHandler:   handleProxyError,
 	}
+	
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ping" {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("pong"))
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
 }
 
 func createDirector(chatTarget, embedTarget, rerankTarget *url.URL) func(*http.Request) {
