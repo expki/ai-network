@@ -52,8 +52,6 @@ RUN python3 -m pip install huggingface_hub[cli]
 COPY --from=builder /build/llama.cpp/build/bin/*.so* /usr/local/lib/
 # Copy executables (including gguf-split for merging multipart files)
 COPY --from=builder /build/llama.cpp/build/bin/* /usr/local/bin/
-# Copy proxy
-COPY llama-proxy /usr/local/bin/
 
 # Set library path - /usr/lib/x86_64-linux-gnu comes first for real CUDA driver when using --gpus
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
@@ -114,6 +112,9 @@ RUN hf download ${MODEL_REPO_RERANK} \
 ENV MODEL_PATH_CHAT=/app/models/${MODEL_FILE_CHAT}
 ENV MODEL_PATH_EMBED=/app/models/${MODEL_FILE_EMBED}
 ENV MODEL_PATH_RERANK=/app/models/${MODEL_FILE_RERANK}
+
+# Copy proxy
+COPY llama-proxy /usr/local/bin/
 
 # Copy startup script
 COPY start.sh /app/start.sh
