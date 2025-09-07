@@ -21,7 +21,7 @@ func createReverseProxy(chatTarget, embedTarget, rerankTarget *url.URL) http.Han
 		ModifyResponse: modifyResponse,
 		ErrorHandler:   handleProxyError,
 	}
-	
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ping" {
 			w.Header().Set("Content-Type", "text/plain")
@@ -47,13 +47,8 @@ func createDirector(chatTarget, embedTarget, rerankTarget *url.URL) func(*http.R
 		} else {
 			req.URL.RawQuery = target.RawQuery + "&" + req.URL.RawQuery
 		}
-
-		// process request: decompress -> transcode
 		if err := decompressRequest(req); err != nil {
 			log.Printf("Failed to decompress request: %v", err)
-		}
-		if err := transcodeBinarytoJSON(req); err != nil {
-			log.Printf("Failed to transcode binary to JSON: %v", err)
 		}
 
 		// clean up headers
@@ -89,10 +84,6 @@ func selectTarget(req *http.Request, chatTarget, embedTarget, rerankTarget *url.
 }
 
 func modifyResponse(resp *http.Response) error {
-	// Convert JSON response to binary if client requested it
-	if err := transcodeJSONtoBinary(resp); err != nil {
-		log.Printf("Failed to transcode JSON to binary: %v", err)
-	}
 
 	// Remove Content-Length header as compression middleware will handle it
 	if resp.Request != nil {

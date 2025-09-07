@@ -62,8 +62,8 @@ WORKDIR /app
 # Download a GGUF model from Hugging Face using hf CLI (using a small model as default)
 # You can change this to any GGUF model from Hugging Face
 # Supports both single-file and multipart/split GGUF downloads
-ARG MODEL_REPO_CHAT="unsloth/gemma-3-12b-it-GGUF"
-ARG MODEL_FILE_CHAT="gemma-3-12b-it-UD-Q4_K_XL.gguf"
+ARG MODEL_REPO_CHAT="unsloth/gemma-3-4b-it-qat-GGUF"
+ARG MODEL_FILE_CHAT="gemma-3-4b-it-qat-UD-Q4_K_XL.gguf"
 ARG MODEL_REPO_EMBED="unsloth/embeddinggemma-300m-GGUF"
 ARG MODEL_FILE_EMBED="embeddinggemma-300M-BF16.gguf"
 ARG MODEL_REPO_RERANK="mradermacher/jina-reranker-v1-tiny-en-GGUF"

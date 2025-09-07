@@ -18,16 +18,16 @@ trap cleanup INT TERM
 : ${THREADS_BATCH:=8}
 : ${N_GPU_LAYERS:=9999}
 : ${CACHE_TYPE_K:=q4_0}
-: ${CACHE_TYPE_V:=q8_0}
-: ${CTX_SIZE_CHAT:=16384}
-: ${CTX_SIZE_EMBED:=16384}
-: ${CTX_SIZE_RERANK:=32768}
-: ${BATCH_SIZE_CHAT:=512}
+: ${CACHE_TYPE_V:=q4_0}
+: ${CTX_SIZE_CHAT:=2048}
+: ${CTX_SIZE_EMBED:=2048}
+: ${CTX_SIZE_RERANK:=2048}
+: ${BATCH_SIZE_CHAT:=2048}
 : ${BATCH_SIZE_EMBED:=2048}
 : ${BATCH_SIZE_RERANK:=2048}
-: ${PARALLEL_CHAT:=2}
-: ${PARALLEL_EMBED:=8}
-: ${PARALLEL_RERANK:=4}
+: ${PARALLEL_CHAT:=10}
+: ${PARALLEL_EMBED:=10}
+: ${PARALLEL_RERANK:=10}
 
 # Array to store PIDs
 declare -a PIDS=()
@@ -43,7 +43,8 @@ if [ -n "${MODEL_PATH_CHAT}" ]; then
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_CHAT} \
     --batch-size ${BATCH_SIZE_CHAT} \
-    --ctx-size ${CTX_SIZE_CHAT} \
+    --ubatch-size ${BATCH_SIZE_CHAT} \
+    --ctx-size $((CTX_SIZE_CHAT * PARALLEL_CHAT)) \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
     --parallel ${PARALLEL_CHAT} \
@@ -65,7 +66,8 @@ if [ -n "${MODEL_PATH_EMBED}" ]; then
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_EMBED} \
     --batch-size ${BATCH_SIZE_EMBED} \
-    --ctx-size ${CTX_SIZE_EMBED} \
+    --ubatch-size ${BATCH_SIZE_EMBED} \
+    --ctx-size $((CTX_SIZE_EMBED * PARALLEL_EMBED)) \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
     --parallel ${PARALLEL_EMBED} \
@@ -87,7 +89,8 @@ if [ -n "${MODEL_PATH_RERANK}" ]; then
   /usr/local/bin/llama-server \
     --model ${MODEL_PATH_RERANK} \
     --batch-size ${BATCH_SIZE_RERANK} \
-    --ctx-size ${CTX_SIZE_RERANK} \
+    --ubatch-size ${BATCH_SIZE_RERANK} \
+    --ctx-size $((CTX_SIZE_RERANK * PARALLEL_RERANK)) \
     --threads ${THREADS} \
     --threads-batch ${THREADS_BATCH} \
     --parallel ${PARALLEL_RERANK} \
