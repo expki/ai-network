@@ -1,7 +1,7 @@
-# Stage 1: Build stage
-FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS builder
+# Single stage with NVIDIA development image
+FROM nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
-# Install build dependencies
+# Install build and runtime dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -9,7 +9,12 @@ RUN apt-get update && apt-get install -y \
     ccache \
     build-essential \
     libcurl4-openssl-dev \
+    libgomp1 \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install huggingface_hub[cli] --break-system-packages
 
 # Configure ccache
 ENV CCACHE_DIR=/ccache
@@ -41,23 +46,10 @@ RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     cmake --build build --config Release -j$(nproc) && \
     ccache -s
 
-# Stage 2: Runtime stage
-FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libgomp1 \
-    libcurl4 \
-    curl \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install huggingface_hub[cli] --break-system-packages
-
 # Copy ALL libraries from build/bin directory (where they're actually built)
-COPY --from=builder /build/llama.cpp/build/bin/*.so* /usr/local/lib/
+RUN cp /build/llama.cpp/build/bin/*.so* /usr/local/lib/ || true
 # Copy executables (including gguf-split for merging multipart files)
-COPY --from=builder /build/llama.cpp/build/bin/* /usr/local/bin/
+RUN cp /build/llama.cpp/build/bin/* /usr/local/bin/
 
 # Set library path - /usr/lib/x86_64-linux-gnu comes first for real CUDA driver when using --gpus
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
