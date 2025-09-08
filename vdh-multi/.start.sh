@@ -64,32 +64,24 @@ fi
 # Array to store PIDs
 declare -a PIDS=()
 
-# Build target URLs for each GPU instance
-CHAT_URLS=""
-EMBED_URLS=""
-RERANK_URLS=""
+# Single backend URLs
+CHAT_URL="http://localhost:6000"
+EMBED_URL="http://localhost:7000"
+RERANK_URL="http://localhost:8000"
 
-for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
-    CHAT_URLS="${CHAT_URLS},http://localhost:$((6000 + gpu_id))"
-    EMBED_URLS="${EMBED_URLS},http://localhost:$((7000 + gpu_id))"
-    RERANK_URLS="${RERANK_URLS},http://localhost:$((8000 + gpu_id))"
-done
-
-echo "Starting llama-proxy with load balancing..."
-echo "Chat URLs: ${CHAT_URLS}"
-echo "Embed URLs: ${EMBED_URLS}"
-echo "Rerank URLs: ${RERANK_URLS}"
+echo "Starting llama-proxy..."
+echo "Chat URL: ${CHAT_URL}"
+echo "Embed URL: ${EMBED_URL}"
+echo "Rerank URL: ${RERANK_URL}"
 
 # Run llama-proxy in background with output to stderr so we can see both services
-TARGET_URL_CHAT="${CHAT_URLS}" TARGET_URL_EMBED="${EMBED_URLS}" TARGET_URL_RERANK="${RERANK_URLS}" LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
+TARGET_URL_CHAT="${CHAT_URL}" TARGET_URL_EMBED="${EMBED_URL}" TARGET_URL_RERANK="${RERANK_URL}" LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
 PIDS+=($!)
 
-# Start chat model servers (one per GPU)
+# Start chat model server (single instance with all GPUs)
 if [ -n "${MODEL_PATH_CHAT}" ]; then
-  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
-    PORT=$((6000 + gpu_id))
-    echo "Starting llama-server for chat model on GPU ${gpu_id} (port ${PORT})..."
-    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+    echo "Starting llama-server for chat model on all GPUs (port 6000)..."
+    /usr/local/bin/llama-server \
       --model ${MODEL_PATH_CHAT} \
       --batch-size ${BATCH_SIZE_CHAT} \
       --ubatch-size ${BATCH_SIZE_CHAT} \
@@ -102,20 +94,17 @@ if [ -n "${MODEL_PATH_CHAT}" ]; then
       --cache-type-k ${CACHE_TYPE_K} \
       --cache-type-v ${CACHE_TYPE_V} \
       --host localhost \
-      --port ${PORT} \
+      --port 6000 \
       --cont-batching \
       --metrics \
-      "$@" 2>&1 | sed "s/^/[chat-gpu${gpu_id}-${PORT}] /" >&2 &
+      "$@" 2>&1 | sed "s/^/[chat] /" >&2 &
     PIDS+=($!)
-  done
 fi
 
-# Start embedding model servers (one per GPU)
+# Start embedding model server (single instance with all GPUs)
 if [ -n "${MODEL_PATH_EMBED}" ]; then
-  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
-    PORT=$((7000 + gpu_id))
-    echo "Starting llama-server for embedding model on GPU ${gpu_id} (port ${PORT})..."
-    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+    echo "Starting llama-server for embedding model on all GPUs (port 7000)..."
+    /usr/local/bin/llama-server \
       --model ${MODEL_PATH_EMBED} \
       --batch-size ${BATCH_SIZE_EMBED} \
       --ubatch-size ${BATCH_SIZE_EMBED} \
@@ -126,22 +115,19 @@ if [ -n "${MODEL_PATH_EMBED}" ]; then
       --n-gpu-layers ${N_GPU_LAYERS} \
       --flash-attn on \
       --host localhost \
-      --port ${PORT} \
+      --port 7000 \
       --cont-batching \
       --metrics \
       --embeddings \
       --pooling cls \
-      "$@" 2>&1 | sed "s/^/[embed-gpu${gpu_id}-${PORT}] /" >&2 &
+      "$@" 2>&1 | sed "s/^/[embed] /" >&2 &
     PIDS+=($!)
-  done
 fi
 
-# Start reranking model servers (one per GPU)
+# Start reranking model server (single instance with all GPUs)
 if [ -n "${MODEL_PATH_RERANK}" ]; then
-  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
-    PORT=$((8000 + gpu_id))
-    echo "Starting llama-server for reranking model on GPU ${gpu_id} (port ${PORT})..."
-    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+    echo "Starting llama-server for reranking model on all GPUs (port 8000)..."
+    /usr/local/bin/llama-server \
       --model ${MODEL_PATH_RERANK} \
       --batch-size ${BATCH_SIZE_RERANK} \
       --ubatch-size ${BATCH_SIZE_RERANK} \
@@ -152,13 +138,12 @@ if [ -n "${MODEL_PATH_RERANK}" ]; then
       --n-gpu-layers ${N_GPU_LAYERS} \
       --flash-attn on \
       --host localhost \
-      --port ${PORT} \
+      --port 8000 \
       --cont-batching \
       --metrics \
       --reranking \
-      "$@" 2>&1 | sed "s/^/[rerank-gpu${gpu_id}-${PORT}] /" >&2 &
+      "$@" 2>&1 | sed "s/^/[rerank] /" >&2 &
     PIDS+=($!)
-  done
 fi
 
 # Monitor all processes - if any dies, kill all and exit
