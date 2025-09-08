@@ -4,7 +4,9 @@
 IMAGE_NAME="vdh/vdh-multi"
 TAG="cuda12.2"
 CACHE_VOLUME="temp-$TAG-cmake"
-BASE_IMAGE="nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04"
+CUDA_VERSION="12.2.2"
+UBUNTU_VERSION="22.04"
+CUDNN_VERSION="cudnn8"
 CUDA_ARCHITECTURES="75;80;86;89"
 
 # Build Golang
@@ -21,14 +23,18 @@ export DOCKER_BUILDKIT=1
 
 # Build the Docker image with BuildKit cache mounts
 echo "Building Docker image: ${IMAGE_NAME}:${TAG}"
-echo "Using base image: ${BASE_IMAGE}"
+echo "Using CUDA version: ${CUDA_VERSION}"
+echo "Using Ubuntu version: ${UBUNTU_VERSION}"
+echo "Using cuDNN version: ${CUDNN_VERSION}"
 echo "CUDA architectures: ${CUDA_ARCHITECTURES}"
 echo "Using ccache volume: ${CACHE_VOLUME}"
 echo "BuildKit enabled for cache mount support"
 docker build \
     --progress=plain \
     --build-arg BUILDKIT_INLINE_CACHE=1 \
-    --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+    --build-arg CUDA_VERSION="${CUDA_VERSION}" \
+    --build-arg UBUNTU_VERSION="${UBUNTU_VERSION}" \
+    --build-arg CUDNN_VERSION="${CUDNN_VERSION}" \
     --build-arg CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -t "${IMAGE_NAME}:${TAG}" \
     .
