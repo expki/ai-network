@@ -104,14 +104,24 @@ func createReverseProxy(chatTargets, embedTargets, rerankTargets []*url.URL) htt
 		ErrorHandler:   createErrorHandler(lb),
 	}
 
+	statusHandler := createStatusHandler(lb)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/ping" {
+		switch r.URL.Path {
+		case "/ping":
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("pong"))
 			return
+		case "/gpus":
+			gpuHandler(w, r)
+			return
+		case "/status":
+			statusHandler(w, r)
+			return
+		default:
+			proxy.ServeHTTP(w, r)
 		}
-		proxy.ServeHTTP(w, r)
 	})
 }
 
