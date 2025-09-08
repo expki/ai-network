@@ -63,11 +63,11 @@ WORKDIR /app
 # You can change this to any GGUF model from Hugging Face
 # Supports both single-file and multipart/split GGUF downloads
 ARG MODEL_REPO_CHAT="unsloth/gemma-3-270m-it-qat-GGUF"
-ARG MODEL_FILE_CHAT="gemma-3-270m-it-qat-F16.gguf"
+ARG MODEL_FILE_CHAT="gemma-3-270m-it-qat-UD-Q8_K_XL.gguf"
 ARG MODEL_REPO_EMBED="unsloth/embeddinggemma-300m-GGUF"
-ARG MODEL_FILE_EMBED="embeddinggemma-300M-BF16.gguf"
+ARG MODEL_FILE_EMBED="embeddinggemma-300M-Q8_0.gguf"
 ARG MODEL_REPO_RERANK="mradermacher/jina-reranker-v1-tiny-en-GGUF"
-ARG MODEL_FILE_RERANK="jina-reranker-v1-tiny-en.f16.gguf"
+ARG MODEL_FILE_RERANK="jina-reranker-v1-tiny-en.Q8_0.gguf"
 
 # Download model files - supports multipart GGUF files
 # Note: llama.cpp can use split GGUF files directly, but we merge them for simplicity
@@ -117,7 +117,7 @@ ENV MODEL_PATH_RERANK=/app/models/${MODEL_FILE_RERANK}
 COPY llama-proxy /usr/local/bin/
 
 # Copy startup script
-COPY start.sh /app/start.sh
+COPY .start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 # Expose both port
