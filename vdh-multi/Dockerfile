@@ -36,7 +36,7 @@ ENV CMAKE_CUDA_COMPILER_LAUNCHER=ccache
 WORKDIR /build
 RUN git clone --depth=1 https://github.com/ggml-org/llama.cpp.git
 
-# Build llama.cpp with CUDA support
+# Build llama.cpp with CUDA support and x86-64 v2 CPU architecture
 WORKDIR /build/llama.cpp
 # Link against CUDA driver stub for build time
 ENV CUDA_DOCKER_ARCH=all
@@ -48,6 +48,8 @@ RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     -DGGML_CPU_ALL_VARIANTS=ON \
     -DLLAMA_BUILD_TESTS=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+    -DCMAKE_C_FLAGS="-march=x86-64-v2 -mtune=generic" \
+    -DCMAKE_CXX_FLAGS="-march=x86-64-v2 -mtune=generic" \
     -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined .
 
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
