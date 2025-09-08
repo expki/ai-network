@@ -120,8 +120,11 @@ COPY llama-proxy /usr/local/bin/
 COPY .start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
-# Expose both port
+# Expose proxy port
 EXPOSE 5000
 
-# Default command - starts proxy in background and llama-server in foreground
+# Verify CUDA installation and GPU support
+RUN nvidia-smi || echo "Warning: nvidia-smi not available in build environment"
+
+# Default command - starts proxy and multiple llama-server instances (one per GPU)
 CMD ["/app/start.sh"]

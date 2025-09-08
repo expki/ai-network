@@ -17,6 +17,23 @@ trap cleanup INT TERM
 CPU_CORES=$(nproc)
 echo "Detected CPU cores: ${CPU_CORES}"
 
+# Detect number of GPUs
+if command -v nvidia-smi &> /dev/null; then
+    GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -n 1)
+    echo "Detected GPUs: ${GPU_COUNT}"
+else
+    echo "ERROR: nvidia-smi not available - no GPUs detected"
+    echo "This container requires NVIDIA GPUs to run"
+    exit 1
+fi
+
+# Exit if no GPUs are detected
+if [ ${GPU_COUNT} -eq 0 ]; then
+    echo "ERROR: No GPUs detected in the system"
+    echo "This container requires at least one NVIDIA GPU to run"
+    exit 1
+fi
+
 # Set default values for runtime environment variables
 # Default to 16 threads, but cap at available CPU cores
 : ${THREADS:=16}
@@ -47,77 +64,101 @@ fi
 # Array to store PIDs
 declare -a PIDS=()
 
-echo "Starting llama-proxy in background..."
+# Build target URLs for each GPU instance
+CHAT_URLS=""
+EMBED_URLS=""
+RERANK_URLS=""
+
+for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
+    CHAT_URLS="${CHAT_URLS},http://localhost:$((6000 + gpu_id))"
+    EMBED_URLS="${EMBED_URLS},http://localhost:$((7000 + gpu_id))"
+    RERANK_URLS="${RERANK_URLS},http://localhost:$((8000 + gpu_id))"
+done
+
+echo "Starting llama-proxy with load balancing..."
+echo "Chat URLs: ${CHAT_URLS}"
+echo "Embed URLs: ${EMBED_URLS}"
+echo "Rerank URLs: ${RERANK_URLS}"
+
 # Run llama-proxy in background with output to stderr so we can see both services
-TARGET_URL_CHAT=http://localhost:5001 TARGET_URL_EMBED=http://localhost:5002 TARGET_URL_RERANK=http://localhost:5003 LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
+TARGET_URL_CHAT="${CHAT_URLS}" TARGET_URL_EMBED="${EMBED_URLS}" TARGET_URL_RERANK="${RERANK_URLS}" LISTEN_ADDR=:5000 /usr/local/bin/llama-proxy 2>&1 | sed "s/^/[llama-proxy] /" >&2 &
 PIDS+=($!)
 
-# Start chat model server
+# Start chat model servers (one per GPU)
 if [ -n "${MODEL_PATH_CHAT}" ]; then
-  echo "Starting llama-server for chat model on port 5001..."
-  /usr/local/bin/llama-server \
-    --model ${MODEL_PATH_CHAT} \
-    --batch-size ${BATCH_SIZE_CHAT} \
-    --ubatch-size ${BATCH_SIZE_CHAT} \
-    --ctx-size $((CTX_SIZE_CHAT * PARALLEL_CHAT)) \
-    --threads ${THREADS} \
-    --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL_CHAT} \
-    --n-gpu-layers ${N_GPU_LAYERS} \
-    --flash-attn on \
-    --cache-type-k ${CACHE_TYPE_K} \
-    --cache-type-v ${CACHE_TYPE_V} \
-    --host localhost \
-    --port 5001 \
-    --cont-batching \
-    --metrics \
-    "$@" 2>&1 | sed "s/^/[chat-5001] /" >&2 &
-  PIDS+=($!)
+  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
+    PORT=$((6000 + gpu_id))
+    echo "Starting llama-server for chat model on GPU ${gpu_id} (port ${PORT})..."
+    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+      --model ${MODEL_PATH_CHAT} \
+      --batch-size ${BATCH_SIZE_CHAT} \
+      --ubatch-size ${BATCH_SIZE_CHAT} \
+      --ctx-size $((CTX_SIZE_CHAT * PARALLEL_CHAT)) \
+      --threads ${THREADS} \
+      --threads-batch ${THREADS_BATCH} \
+      --parallel ${PARALLEL_CHAT} \
+      --n-gpu-layers ${N_GPU_LAYERS} \
+      --flash-attn on \
+      --cache-type-k ${CACHE_TYPE_K} \
+      --cache-type-v ${CACHE_TYPE_V} \
+      --host localhost \
+      --port ${PORT} \
+      --cont-batching \
+      --metrics \
+      "$@" 2>&1 | sed "s/^/[chat-gpu${gpu_id}-${PORT}] /" >&2 &
+    PIDS+=($!)
+  done
 fi
 
-# Start embedding model server
+# Start embedding model servers (one per GPU)
 if [ -n "${MODEL_PATH_EMBED}" ]; then
-  echo "Starting llama-server for embedding model on port 5002..."
-  /usr/local/bin/llama-server \
-    --model ${MODEL_PATH_EMBED} \
-    --batch-size ${BATCH_SIZE_EMBED} \
-    --ubatch-size ${BATCH_SIZE_EMBED} \
-    --ctx-size $((CTX_SIZE_EMBED * PARALLEL_EMBED)) \
-    --threads ${THREADS} \
-    --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL_EMBED} \
-    --n-gpu-layers ${N_GPU_LAYERS} \
-    --flash-attn on \
-    --host localhost \
-    --port 5002 \
-    --cont-batching \
-    --metrics \
-    --embeddings \
-    --pooling cls \
-    "$@" 2>&1 | sed "s/^/[embed-5002] /" >&2 &
-  PIDS+=($!)
+  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
+    PORT=$((7000 + gpu_id))
+    echo "Starting llama-server for embedding model on GPU ${gpu_id} (port ${PORT})..."
+    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+      --model ${MODEL_PATH_EMBED} \
+      --batch-size ${BATCH_SIZE_EMBED} \
+      --ubatch-size ${BATCH_SIZE_EMBED} \
+      --ctx-size $((CTX_SIZE_EMBED * PARALLEL_EMBED)) \
+      --threads ${THREADS} \
+      --threads-batch ${THREADS_BATCH} \
+      --parallel ${PARALLEL_EMBED} \
+      --n-gpu-layers ${N_GPU_LAYERS} \
+      --flash-attn on \
+      --host localhost \
+      --port ${PORT} \
+      --cont-batching \
+      --metrics \
+      --embeddings \
+      --pooling cls \
+      "$@" 2>&1 | sed "s/^/[embed-gpu${gpu_id}-${PORT}] /" >&2 &
+    PIDS+=($!)
+  done
 fi
 
-# Start reranking model server
+# Start reranking model servers (one per GPU)
 if [ -n "${MODEL_PATH_RERANK}" ]; then
-  echo "Starting llama-server for reranking model on port 5003..."
-  /usr/local/bin/llama-server \
-    --model ${MODEL_PATH_RERANK} \
-    --batch-size ${BATCH_SIZE_RERANK} \
-    --ubatch-size ${BATCH_SIZE_RERANK} \
-    --ctx-size $((CTX_SIZE_RERANK * PARALLEL_RERANK)) \
-    --threads ${THREADS} \
-    --threads-batch ${THREADS_BATCH} \
-    --parallel ${PARALLEL_RERANK} \
-    --n-gpu-layers ${N_GPU_LAYERS} \
-    --flash-attn on \
-    --host localhost \
-    --port 5003 \
-    --cont-batching \
-    --metrics \
-    --reranking \
-    "$@" 2>&1 | sed "s/^/[rerank-5003] /" >&2 &
-  PIDS+=($!)
+  for gpu_id in $(seq 0 $((GPU_COUNT - 1))); do
+    PORT=$((8000 + gpu_id))
+    echo "Starting llama-server for reranking model on GPU ${gpu_id} (port ${PORT})..."
+    CUDA_VISIBLE_DEVICES=${gpu_id} /usr/local/bin/llama-server \
+      --model ${MODEL_PATH_RERANK} \
+      --batch-size ${BATCH_SIZE_RERANK} \
+      --ubatch-size ${BATCH_SIZE_RERANK} \
+      --ctx-size $((CTX_SIZE_RERANK * PARALLEL_RERANK)) \
+      --threads ${THREADS} \
+      --threads-batch ${THREADS_BATCH} \
+      --parallel ${PARALLEL_RERANK} \
+      --n-gpu-layers ${N_GPU_LAYERS} \
+      --flash-attn on \
+      --host localhost \
+      --port ${PORT} \
+      --cont-batching \
+      --metrics \
+      --reranking \
+      "$@" 2>&1 | sed "s/^/[rerank-gpu${gpu_id}-${PORT}] /" >&2 &
+    PIDS+=($!)
+  done
 fi
 
 # Monitor all processes - if any dies, kill all and exit
