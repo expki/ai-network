@@ -13,9 +13,24 @@ cleanup() {
 # Trap SIGINT (Ctrl+C) and SIGTERM to cleanly stop all processes
 trap cleanup INT TERM
 
+# Detect number of CPU cores (works in Docker)
+CPU_CORES=$(nproc)
+echo "Detected CPU cores: ${CPU_CORES}"
+
 # Set default values for runtime environment variables
-: ${THREADS:=8}
-: ${THREADS_BATCH:=8}
+# Default to 16 threads, but cap at available CPU cores
+: ${THREADS:=16}
+: ${THREADS_BATCH:=16}
+
+# Cap threads at available CPU cores
+if [ ${THREADS} -gt ${CPU_CORES} ]; then
+    echo "Limiting THREADS from ${THREADS} to ${CPU_CORES} (available cores)"
+    THREADS=${CPU_CORES}
+fi
+if [ ${THREADS_BATCH} -gt ${CPU_CORES} ]; then
+    echo "Limiting THREADS_BATCH from ${THREADS_BATCH} to ${CPU_CORES} (available cores)"
+    THREADS_BATCH=${CPU_CORES}
+fi
 : ${N_GPU_LAYERS:=9999}
 : ${CACHE_TYPE_K:=q8_0}
 : ${CACHE_TYPE_V:=q8_0}
