@@ -7,8 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -17,94 +15,39 @@ var (
 	rerankPattern = regexp.MustCompile(`/(?:v1/)?rerank(?:ing)?/?$`)
 )
 
-// Backend represents a single backend server with connection tracking
-type backend struct {
-	url         *url.URL
-	connections int64
-	mu          sync.RWMutex
-}
-
-func (b *backend) incrementConnections() {
-	atomic.AddInt64(&b.connections, 1)
-}
-
-func (b *backend) decrementConnections() {
-	atomic.AddInt64(&b.connections, -1)
-}
-
-func (b *backend) getConnections() int64 {
-	return atomic.LoadInt64(&b.connections)
-}
-
-// Load balancer state for least-connections selection
-type loadBalancer struct {
-	chatBackends   []*backend
-	embedBackends  []*backend
-	rerankBackends []*backend
-	mu             sync.RWMutex
-}
-
-func newLoadBalancer(chatTargets, embedTargets, rerankTargets []*url.URL) *loadBalancer {
-	lb := &loadBalancer{
-		chatBackends:   make([]*backend, len(chatTargets)),
-		embedBackends:  make([]*backend, len(embedTargets)),
-		rerankBackends: make([]*backend, len(rerankTargets)),
-	}
-
-	for i, url := range chatTargets {
-		lb.chatBackends[i] = &backend{url: url}
-	}
-	for i, url := range embedTargets {
-		lb.embedBackends[i] = &backend{url: url}
-	}
-	for i, url := range rerankTargets {
-		lb.rerankBackends[i] = &backend{url: url}
-	}
-
-	return lb
-}
-
-func (lb *loadBalancer) getLeastConnectedBackend(backends []*backend) *backend {
-	if len(backends) == 0 {
-		return nil
-	}
-
-	var selected *backend
-	minConnections := int64(^uint64(0) >> 1) // Max int64
-
-	for _, b := range backends {
-		connections := b.getConnections()
-		if connections < minConnections {
-			minConnections = connections
-			selected = b
-		}
-	}
-
-	return selected
-}
-
-func (lb *loadBalancer) getNextChat() *backend {
-	return lb.getLeastConnectedBackend(lb.chatBackends)
-}
-
-func (lb *loadBalancer) getNextEmbed() *backend {
-	return lb.getLeastConnectedBackend(lb.embedBackends)
-}
-
-func (lb *loadBalancer) getNextRerank() *backend {
-	return lb.getLeastConnectedBackend(lb.rerankBackends)
+// BackendConfig holds the single backend URL for each model type
+type backendConfig struct {
+	chatURL   *url.URL
+	embedURL  *url.URL
+	rerankURL *url.URL
 }
 
 func createReverseProxy(chatTargets, embedTargets, rerankTargets []*url.URL) http.Handler {
-	lb := newLoadBalancer(chatTargets, embedTargets, rerankTargets)
+	// Use first URL from each target list (should only be one now)
+	var chatURL, embedURL, rerankURL *url.URL
+	if len(chatTargets) > 0 {
+		chatURL = chatTargets[0]
+	}
+	if len(embedTargets) > 0 {
+		embedURL = embedTargets[0]
+	}
+	if len(rerankTargets) > 0 {
+		rerankURL = rerankTargets[0]
+	}
+	
+	config := &backendConfig{
+		chatURL:   chatURL,
+		embedURL:  embedURL,
+		rerankURL: rerankURL,
+	}
 	
 	proxy := &httputil.ReverseProxy{
-		Director:       createDirector(lb),
-		ModifyResponse: createModifyResponse(lb),
-		ErrorHandler:   createErrorHandler(lb),
+		Director:       createDirector(config),
+		ModifyResponse: createModifyResponse(),
+		ErrorHandler:   createErrorHandler(),
 	}
 
-	statusHandler := createStatusHandler(lb)
+	statusHandler := createStatusHandler(config)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -125,29 +68,23 @@ func createReverseProxy(chatTargets, embedTargets, rerankTargets []*url.URL) htt
 	})
 }
 
-func createDirector(lb *loadBalancer) func(*http.Request) {
+func createDirector(config *backendConfig) func(*http.Request) {
 	return func(req *http.Request) {
-		backend := selectBackend(req, lb)
-		if backend == nil {
+		backendURL := selectBackend(req, config)
+		if backendURL == nil {
 			log.Printf("Error: No backend available for request")
 			return
 		}
 
-		// Increment connection count for this backend
-		backend.incrementConnections()
-		
-		// Store backend in request context so we can decrement later
-		req.Header.Set("X-Backend-URL", backend.url.String())
-
 		// update request URL
-		req.URL.Scheme = backend.url.Scheme
-		req.URL.Host = backend.url.Host
-		req.URL.Path = singleJoiningSlash(backend.url.Path, req.URL.Path)
+		req.URL.Scheme = backendURL.Scheme
+		req.URL.Host = backendURL.Host
+		req.URL.Path = singleJoiningSlash(backendURL.Path, req.URL.Path)
 
-		if backend.url.RawQuery == "" || req.URL.RawQuery == "" {
-			req.URL.RawQuery = backend.url.RawQuery + req.URL.RawQuery
+		if backendURL.RawQuery == "" || req.URL.RawQuery == "" {
+			req.URL.RawQuery = backendURL.RawQuery + req.URL.RawQuery
 		} else {
-			req.URL.RawQuery = backend.url.RawQuery + "&" + req.URL.RawQuery
+			req.URL.RawQuery = backendURL.RawQuery + "&" + req.URL.RawQuery
 		}
 		if err := decompressRequest(req); err != nil {
 			log.Printf("Failed to decompress request: %v", err)
@@ -156,11 +93,11 @@ func createDirector(lb *loadBalancer) func(*http.Request) {
 		// clean up headers
 		req.Header.Del("Accept-Encoding") // prevent upstream compression
 		req.Header.Del("Authorization")   // remove auth header before forwarding
-		req.Host = backend.url.Host
+		req.Host = backendURL.Host
 	}
 }
 
-func selectBackend(req *http.Request, lb *loadBalancer) *backend {
+func selectBackend(req *http.Request, config *backendConfig) *url.URL {
 	path := req.URL.Path
 	queryType := req.Header.Get("Query-Type")
 
@@ -168,53 +105,46 @@ func selectBackend(req *http.Request, lb *loadBalancer) *backend {
 		req.Header.Del("Query-Type")
 	}
 
-	// Select backend based on Query-Type header or path pattern with least-connections
-	var backend *backend
+	// Select backend based on Query-Type header or path pattern
+	var backendURL *url.URL
 	switch {
 	case strings.EqualFold(queryType, "chat") || (queryType == "" && chatPattern.MatchString(path)):
-		backend = lb.getNextChat()
-		if backend != nil {
-			log.Printf("Chat query detected, routing to %s (connections: %d)", backend.url.Host, backend.getConnections())
+		backendURL = config.chatURL
+		if backendURL != nil {
+			log.Printf("Chat query detected, routing to %s", backendURL.Host)
 		}
 	case strings.EqualFold(queryType, "embed") || (queryType == "" && embedPattern.MatchString(path)):
-		backend = lb.getNextEmbed()
-		if backend != nil {
-			log.Printf("Embed query detected, routing to %s (connections: %d)", backend.url.Host, backend.getConnections())
+		backendURL = config.embedURL
+		if backendURL != nil {
+			log.Printf("Embed query detected, routing to %s", backendURL.Host)
 		}
 	case strings.EqualFold(queryType, "rerank") || (queryType == "" && rerankPattern.MatchString(path)):
-		backend = lb.getNextRerank()
-		if backend != nil {
-			log.Printf("Rerank query detected, routing to %s (connections: %d)", backend.url.Host, backend.getConnections())
+		backendURL = config.rerankURL
+		if backendURL != nil {
+			log.Printf("Rerank query detected, routing to %s", backendURL.Host)
 		}
 	default:
 		log.Println("No query detected, fallback to Chat")
-		backend = lb.getNextChat()
-		if backend != nil {
-			log.Printf("Routing to chat backend %s (connections: %d)", backend.url.Host, backend.getConnections())
+		backendURL = config.chatURL
+		if backendURL != nil {
+			log.Printf("Routing to chat backend %s", backendURL.Host)
 		}
 	}
 
-	if backend == nil {
-		// Fallback to first chat backend if available
-		if len(lb.chatBackends) > 0 {
-			backend = lb.chatBackends[0]
-			log.Printf("Warning: No backend available, using fallback: %s", backend.url.Host)
+	if backendURL == nil {
+		// Fallback to chat backend if available
+		if config.chatURL != nil {
+			backendURL = config.chatURL
+			log.Printf("Warning: No backend available, using fallback: %s", backendURL.Host)
 		}
 	}
 
-	return backend
+	return backendURL
 }
 
-func createModifyResponse(lb *loadBalancer) func(*http.Response) error {
+func createModifyResponse() func(*http.Response) error {
 	return func(resp *http.Response) error {
-		// Decrement connection count for the backend that handled this request
 		if resp.Request != nil {
-			backendURL := resp.Request.Header.Get("X-Backend-URL")
-			if backendURL != "" {
-				decrementBackendConnection(lb, backendURL)
-				resp.Request.Header.Del("X-Backend-URL")
-			}
-			
 			// Remove Content-Length header as compression middleware will handle it
 			resp.Header.Del("Content-Length")
 			resp.ContentLength = -1
@@ -224,41 +154,13 @@ func createModifyResponse(lb *loadBalancer) func(*http.Response) error {
 	}
 }
 
-func createErrorHandler(lb *loadBalancer) func(http.ResponseWriter, *http.Request, error) {
+func createErrorHandler() func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
-		// Decrement connection count on error
-		backendURL := r.Header.Get("X-Backend-URL")
-		if backendURL != "" {
-			decrementBackendConnection(lb, backendURL)
-			r.Header.Del("X-Backend-URL")
-		}
-		
 		log.Printf("Proxy error: %v", err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 	}
 }
 
-func decrementBackendConnection(lb *loadBalancer, backendURL string) {
-	// Find and decrement the backend connection count
-	for _, b := range lb.chatBackends {
-		if b.url.String() == backendURL {
-			b.decrementConnections()
-			return
-		}
-	}
-	for _, b := range lb.embedBackends {
-		if b.url.String() == backendURL {
-			b.decrementConnections()
-			return
-		}
-	}
-	for _, b := range lb.rerankBackends {
-		if b.url.String() == backendURL {
-			b.decrementConnections()
-			return
-		}
-	}
-}
 
 func singleJoiningSlash(a, b string) string {
 	aslash := strings.HasSuffix(a, "/")

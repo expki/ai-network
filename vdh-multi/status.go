@@ -8,9 +8,8 @@ import (
 )
 
 type BackendStatus struct {
-	URL         string `json:"url"`
-	Connections int64  `json:"active_connections"`
-	Type        string `json:"type"`
+	URL  string `json:"url"`
+	Type string `json:"type"`
 }
 
 type StatusResponse struct {
@@ -18,36 +17,33 @@ type StatusResponse struct {
 	GPUs     []GPUInfo       `json:"gpus,omitempty"`
 }
 
-func createStatusHandler(lb *loadBalancer) http.HandlerFunc {
+func createStatusHandler(config *backendConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		var backends []BackendStatus
 
-		// Add chat backends
-		for _, b := range lb.chatBackends {
+		// Add chat backend
+		if config.chatURL != nil {
 			backends = append(backends, BackendStatus{
-				URL:         b.url.String(),
-				Connections: b.getConnections(),
-				Type:        "chat",
+				URL:  config.chatURL.String(),
+				Type: "chat",
 			})
 		}
 
-		// Add embed backends
-		for _, b := range lb.embedBackends {
+		// Add embed backend
+		if config.embedURL != nil {
 			backends = append(backends, BackendStatus{
-				URL:         b.url.String(),
-				Connections: b.getConnections(),
-				Type:        "embed",
+				URL:  config.embedURL.String(),
+				Type: "embed",
 			})
 		}
 
-		// Add rerank backends
-		for _, b := range lb.rerankBackends {
+		// Add rerank backend
+		if config.rerankURL != nil {
 			backends = append(backends, BackendStatus{
-				URL:         b.url.String(),
-				Connections: b.getConnections(),
-				Type:        "rerank",
+				URL:  config.rerankURL.String(),
+				Type: "rerank",
 			})
 		}
 
