@@ -4,10 +4,12 @@
 IMAGE_NAME="vdh/vdh-multi"
 TAG="cuda12.2"
 CACHE_VOLUME="temp-$TAG-cmake"
+BASE_IMAGE="nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04"
+CUDA_ARCHITECTURES="75;80;86;89"
 
 # Build Golang
-GOAMD64=v3 GOOS=linux GOARCH=amd64 go build -o "$TAG/llama-proxy" .
-cp -f .start.sh "$TAG/start.sh"
+GOAMD64=v2 GOOS=linux GOARCH=amd64 go build -o "llama-proxy" .
+cp -f .start.sh "start.sh"
 
 # Create Docker volume for ccache if it doesn't exist
 if ! docker volume inspect "${CACHE_VOLUME}" >/dev/null 2>&1; then
@@ -20,13 +22,17 @@ export DOCKER_BUILDKIT=1
 
 # Build the Docker image with BuildKit cache mounts
 echo "Building Docker image: ${IMAGE_NAME}:${TAG}"
+echo "Using base image: ${BASE_IMAGE}"
+echo "CUDA architectures: ${CUDA_ARCHITECTURES}"
 echo "Using ccache volume: ${CACHE_VOLUME}"
 echo "BuildKit enabled for cache mount support"
 docker build \
     --progress=plain \
     --build-arg BUILDKIT_INLINE_CACHE=1 \
+    --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+    --build-arg CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -t "${IMAGE_NAME}:${TAG}" \
-    "$TAG/."
+    .
 
 # Check if build was successful
 if [ $? -eq 0 ]; then

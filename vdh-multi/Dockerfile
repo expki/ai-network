@@ -1,5 +1,12 @@
 # Single stage with NVIDIA development image
-FROM nvidia/cuda:12.9.1-cudnn-devel-ubuntu24.04
+# Build arguments for base image and CUDA architectures
+ARG BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
+ARG CUDA_ARCHITECTURES="75;80;86;89;90"
+
+FROM ${BASE_IMAGE}
+
+# Re-declare ARG after FROM to use it in build
+ARG CUDA_ARCHITECTURES
 
 # Install build and runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,7 +21,10 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install huggingface_hub[cli] --break-system-packages
+# Install huggingface_hub - handle both Ubuntu 22.04 and 24.04
+# Ubuntu 22.04 doesn't require --break-system-packages, Ubuntu 24.04 does
+RUN python3 -m pip install huggingface_hub[cli] --break-system-packages 2>/dev/null || \
+    python3 -m pip install huggingface_hub[cli]
 
 # Configure ccache
 ENV CCACHE_DIR=/ccache
@@ -37,7 +47,7 @@ RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
     -DGGML_BACKEND_DL=ON \
     -DGGML_CPU_ALL_VARIANTS=ON \
     -DLLAMA_BUILD_TESTS=OFF \
-    -DCMAKE_CUDA_ARCHITECTURES="86;89;90;100;120" \
+    -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined .
 
 RUN --mount=type=cache,target=/ccache,id=llama-cpp-ccache \
