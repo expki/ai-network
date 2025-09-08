@@ -9,7 +9,6 @@ CUDA_ARCHITECTURES="75;80;86;89;90;100;120"
 
 # Build Golang
 GOAMD64=v2 GOOS=linux GOARCH=amd64 go build -o "llama-proxy" .
-cp -f .start.sh "start.sh"
 
 # Create Docker volume for ccache if it doesn't exist
 if ! docker volume inspect "${CACHE_VOLUME}" >/dev/null 2>&1; then
